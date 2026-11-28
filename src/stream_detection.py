@@ -43,10 +43,7 @@ async def _capture_latest_frames(
             return
         _mark_frame_readonly(frame)
         async with latest_frame.lock:
-            latest_frame.frame = frame
-            latest_frame.timestamp = ts
-            latest_frame.sequence += 1
-            latest_frame.event.set()
+            latest_frame.publish(frame, ts)
 
 
 def _capture_reconnect_event(
@@ -72,11 +69,7 @@ async def _synchronise_capture_reconnects(
             continue
         reconnect_event.clear()
         async with latest_frame.lock:
-            latest_frame.frame = None
-            latest_frame.timestamp = 0.0
-            latest_frame.sequence += 1
-            latest_frame.generation += 1
-            latest_frame.event.set()
+            latest_frame.invalidate()
         async with latest_detection.lock:
             latest_detection.frame = None
             latest_detection.timestamp = 0.0
@@ -102,17 +95,11 @@ async def _detect_latest_frames(runtime: StreamRuntime) -> None:
             continue
 
         async with latest_frame.lock:
-            if (
-                latest_frame.sequence == last_sequence
-                or latest_frame.frame is None
-            ):
-                latest_frame.event.clear()
+            sample = latest_frame.take_for_inference(last_sequence)
+            if sample is None:
                 continue
-            frame = latest_frame.frame
-            ts = latest_frame.timestamp
-            last_sequence = latest_frame.sequence
+            frame, ts, last_sequence = sample
             source_generation = latest_frame.generation
-            latest_frame.event.clear()
 
         try:
             _datas, track_data = await yolo_detector.generate_detections(
@@ -161,6 +148,7 @@ async def _record_detection_result(
         result.track_data,
     )
     model_metadata = result.model_metadata
+    source_generation = runtime.latest_frame.generation
     if model_metadata:
         await report_loaded_model(runtime, model_metadata)
     danger_detector, redis_manager = runtime.danger, runtime.redis
@@ -183,11 +171,13 @@ async def _record_detection_result(
         if warning_event_throttle_seconds is not None
         else _warning_event_throttle_seconds()
     )
-    warnings, cone_polys, pole_polys = danger_detector.detect_danger(
-        cast(list[list[float]], track_data),
-    )
-
     async with latest_detection.lock:
+        # Reconnect can invalidate this result during the model-status write.
+        if source_generation != runtime.latest_frame.generation:
+            return last_notification_time, last_warning_event_time
+        warnings, cone_polys, pole_polys = danger_detector.detect_danger(
+            cast(list[list[float]], track_data),
+        )
         latest_detection.frame = frame
         latest_detection.timestamp = timestamp
         latest_detection.sequence = sequence

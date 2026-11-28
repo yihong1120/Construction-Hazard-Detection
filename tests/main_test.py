@@ -1213,22 +1213,12 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             await self.app.reload_configurations()
         mock_stop.assert_called_once()
 
-    def test_validate_server_model_key_accepts_configured_model(self) -> None:
-        """Server mode accepts configured YOLO server model keys."""
-        with patch.dict(
-            os.environ,
-            {'DETECT_SERVER_MODEL_KEYS': 'yolo26n,yolo26s'},
-        ):
-            processor._validate_server_model_key('yolo26n')
+    def test_validate_server_model_key_accepts_valid_identifier(self) -> None:
+        processor._validate_server_model_key('site-detector_v2')
 
-    def test_validate_server_model_key_rejects_unknown_model(self) -> None:
-        """Server mode rejects model keys the YOLO server cannot load."""
-        with patch.dict(
-            os.environ,
-            {'DETECT_SERVER_MODEL_KEYS': 'yolo26n,yolo26s'},
-        ):
-            with self.assertRaisesRegex(RuntimeError, 'Invalid model key'):
-                processor._validate_server_model_key('../outside')
+    def test_validate_server_model_key_rejects_path(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, 'Invalid model key'):
+            processor._validate_server_model_key('../outside')
 
     async def test_delete_stream_live_metadata_removes_stream_key(
         self,
@@ -1272,17 +1262,16 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         cfg = self.dummy_cfg.copy()
-        cfg.update({'model_key': 'yolo26n'})
-        streaming_capture = AsyncMock()
+        cfg.update({'model_key': 'yolo26n', 'stream_id': 64})
         yolo_detector = AsyncMock()
         yolo_detector.model_metadata = {}
         redis_manager = MagicMock()
         redis_manager.redis.get = AsyncMock(return_value=None)
         redis_manager.delete = AsyncMock(side_effect=RuntimeError('gone'))
         with patch(
-            'src.stream_processor.StreamCapture',
-            return_value=streaming_capture,
-        ), patch(
+            'src.stream_processor.StreamCapture.release_resources',
+            new_callable=AsyncMock,
+        ) as release_capture, patch(
             'src.stream_processor.YoloDetector',
             return_value=yolo_detector,
         ), patch(
@@ -1302,6 +1291,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM': 'false',
                 'MEDIA_PUBLISH_CLEAN_STREAM': 'true',
                 'MEDIA_PUBLISH_ANNOTATED_STREAM': 'true',
+                'STREAM_CAPTURE_INFERENCE_HISTORY_BY_CAMERA': '{"64":4}',
             },
         ):
             await processor._run_single_stream(
@@ -1310,8 +1300,16 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 yolo_result_queue=object(),
             )
         decoupled_loop.assert_awaited_once()
+        awaited = decoupled_loop.await_args
+        assert awaited is not None
+        state = awaited.args[0].latest_frame
+        frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        with patch('src.stream_runtime_state.monotonic', return_value=1.0):
+            for seq in range(1, 6):
+                state.publish(frame, float(seq))
+            self.assertEqual(state.take_for_inference(0).sequence, 2)
         yolo_detector.close.assert_awaited_once()
-        streaming_capture.release_resources.assert_awaited_once()
+        release_capture.assert_awaited_once()
         redis_manager.delete.assert_awaited_once()
 
     async def test_invalid_media_settings_stop_before_resources_start(self):

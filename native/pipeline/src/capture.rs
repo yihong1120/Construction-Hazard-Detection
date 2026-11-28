@@ -2,10 +2,11 @@
 //! without converting it, so a full output queue cannot back up a live source.
 use crate::{
     config::{CaptureSettings, Stream},
-    frame::{Frame, Pool, SharedFrame},
+    frame::{Buffer, Frame, Pool, SharedFrame},
 };
 use anyhow::{Result, ensure};
 use std::{
+    collections::VecDeque,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -20,6 +21,19 @@ pub struct Latest {
     pub frame: Option<SharedFrame>,
     pub terminal: bool,
     pub generation: u64,
+    pub(crate) previous: VecDeque<SharedFrame>,
+}
+impl Latest {
+    /// At dispatch, recover short bursts in order. Under sustained backlog,
+    /// jump over old history; the newest frame is always eligible.
+    pub(crate) fn for_inference(&self, minimum: u64, now: Instant) -> Option<SharedFrame> {
+        let newest = self.frame.as_ref().filter(|f| f.sequence >= minimum)?;
+        let frame = self.previous.iter().find(|frame| {
+            frame.sequence >= minimum
+                && now.duration_since(frame.captured) <= Duration::from_millis(100)
+        });
+        Some(Arc::clone(frame.unwrap_or(newest)))
+    }
 }
 pub enum Frames {
     Latest(watch::Receiver<Latest>),
@@ -45,19 +59,47 @@ pub struct Capture {
     pub stats: Arc<Stats>,
 }
 enum Target {
-    Latest(watch::Sender<Latest>),
+    Latest {
+        sender: watch::Sender<Latest>,
+        depth: usize,
+    },
     Lossless(mpsc::Sender<SharedFrame>),
 }
 impl Target {
+    fn try_buffer(&self, pool: &Pool) -> Option<Buffer> {
+        let buffer = pool.try_take();
+        if buffer.is_none()
+            && let Self::Latest { sender, depth: 2.. } = self
+        {
+            // A slow output may also own capture buffers. Give history back
+            // before dropping a newly decoded frame. The latest frame stays live.
+            sender.send_if_modified(|latest| {
+                latest.previous.clear();
+                false
+            });
+            return pool.try_take();
+        }
+        buffer
+    }
     fn send(&self, mut frame: SharedFrame, stop: &CancellationToken) -> bool {
         match self {
-            Self::Latest(sender) => sender
-                .send(Latest {
-                    generation: frame.generation,
-                    frame: Some(frame),
-                    terminal: false,
-                })
-                .is_ok(),
+            Self::Latest { sender, depth } => {
+                if sender.is_closed() {
+                    return false;
+                }
+                sender.send_modify(|latest| {
+                    latest.generation = frame.generation;
+                    if let Some(previous) = latest.frame.replace(frame)
+                        && *depth > 1
+                    {
+                        if latest.previous.len() == depth - 1 {
+                            latest.previous.pop_front();
+                        }
+                        latest.previous.push_back(previous);
+                    }
+                });
+                true
+            }
             Self::Lossless(sender) => loop {
                 match sender.try_send(frame) {
                     Ok(()) => return true,
@@ -72,16 +114,15 @@ impl Target {
         }
     }
     fn invalidate(&self, generation: u64) {
-        if let Self::Latest(sender) = self {
+        if let Self::Latest { sender, .. } = self {
             let _ = sender.send(Latest {
-                frame: None,
                 generation,
-                terminal: false,
+                ..Latest::default()
             });
         }
     }
     fn finish(&self) {
-        if let Self::Latest(sender) = self {
+        if let Self::Latest { sender, .. } = self {
             sender.send_modify(|value| value.terminal = true);
         }
     }
@@ -95,10 +136,10 @@ impl Frames {
             Self::Latest(receiver) => loop {
                 {
                     let latest = receiver.borrow_and_update();
-                    if let Some(frame) = &latest.frame {
-                        if frame.sequence > seen {
-                            return Some(frame.clone());
-                        }
+                    if let Some(frame) =
+                        latest.for_inference(seen.saturating_add(1), Instant::now())
+                    {
+                        return Some(frame);
                     }
                     if latest.terminal {
                         return None;
@@ -148,7 +189,12 @@ pub fn spawn(
         (Target::Lossless(tx), Frames::Lossless(rx))
     } else {
         let (tx, rx) = watch::channel(Latest::default());
-        (Target::Latest(tx), Frames::Latest(rx))
+        let depth = settings
+            .inference_history_by_camera
+            .get(&spec.id)
+            .copied()
+            .unwrap_or(1);
+        (Target::Latest { sender: tx, depth }, Frames::Latest(rx))
     };
     let produced = Arc::new(AtomicU64::new(0));
     let count = produced.clone();
@@ -296,7 +342,7 @@ pub fn spawn(
                     continue;
                 }
                 let mut pixels = loop {
-                    if let Some(buffer) = pool.try_take() {
+                    if let Some(buffer) = target.try_buffer(&pool) {
                         break Some(buffer);
                     }
                     if !lossless || stop.is_cancelled() {
@@ -538,6 +584,88 @@ impl Liveness {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn frame(pool: &Pool, sequence: u64, generation: u64, captured: Instant) -> SharedFrame {
+        Arc::new(Frame {
+            pixels: pool.take(),
+            device: None,
+            host: None,
+            annotation: None,
+            width: 2,
+            height: 2,
+            sequence,
+            generation,
+            timestamp_ms: 0,
+            captured,
+            source_pts: None,
+            source_lag_ms: 0.,
+        })
+    }
+    #[tokio::test]
+    async fn inference_history_drains_bursts_in_order_and_keeps_overlay_latest() {
+        let (sender, feed) = watch::channel(Latest::default());
+        let target = Target::Latest { sender, depth: 3 };
+        let stop = CancellationToken::new();
+        let pool = Pool::new(12, 5);
+        let now = Instant::now();
+        for sequence in 1..=4 {
+            assert!(target.send(frame(&pool, sequence, 1, now), &stop));
+        }
+        target.finish();
+        assert_eq!(feed.borrow().frame.as_ref().unwrap().sequence, 4);
+        let mut frames = Frames::Latest(feed);
+        let mut seen = 0;
+        for expected in 2..=4 {
+            seen = frames.next(seen, &stop).await.unwrap().sequence;
+            assert_eq!(seen, expected);
+        }
+        assert!(frames.next(seen, &stop).await.is_none());
+    }
+    #[test]
+    fn inference_history_skips_old_backlog_and_clears_on_reconnect() {
+        let (sender, feed) = watch::channel(Latest::default());
+        let target = Target::Latest { sender, depth: 3 };
+        let stop = CancellationToken::new();
+        let pool = Pool::new(12, 5);
+        let start = Instant::now();
+        for (sequence, ms) in [(1, 0), (2, 50), (3, 100)] {
+            target.send(
+                frame(&pool, sequence, 1, start + Duration::from_millis(ms)),
+                &stop,
+            );
+        }
+        let at = |ms| {
+            feed.borrow()
+                .for_inference(1, start + Duration::from_millis(ms))
+                .unwrap()
+                .sequence
+        };
+        assert_eq!(at(105), 2);
+        assert_eq!(at(250), 3);
+        target.invalidate(2);
+        assert!(feed.borrow().for_inference(1, start).is_none());
+        target.send(frame(&pool, 4, 2, start), &stop);
+        assert_eq!(at(0), 4);
+    }
+    #[test]
+    fn inference_history_releases_buffers_on_pool_pressure() {
+        let (sender, feed) = watch::channel(Latest::default());
+        let target = Target::Latest { sender, depth: 3 };
+        let pool = Pool::new(12, 5);
+        let _downstream = [pool.take(), pool.take()];
+        let stop = CancellationToken::new();
+        for sequence in 1..=3 {
+            target.send(frame(&pool, sequence, 1, Instant::now()), &stop);
+        }
+        assert!(pool.try_take().is_none());
+        assert!(target.try_buffer(&pool).is_some());
+        assert_eq!(
+            feed.borrow()
+                .for_inference(1, Instant::now())
+                .unwrap()
+                .sequence,
+            3
+        );
+    }
     #[test]
     fn no_pts_health_sampling_waits_one_second_and_detects_a_frozen_source() {
         let mut liveness = Liveness::new();

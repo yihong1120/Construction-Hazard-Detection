@@ -136,7 +136,8 @@ Rust 以已載入且啟用、未過期的鏡頭數除以 `cameras_per_worker`，
 ## 擷取與處理時脈
 
 - `capture.buffer_frames` 是每來源 BGR buffer 的硬上限（即時預設 6），不是快取數；滿載時繼續解碼／排空來源但不做 BGR 轉換。離線 lossless 模式等待空間，保留全部影格。buffer 尾端保留 codec SIMD 需要的 64 bytes padding，最後一個 `Arc` 釋放才回收。
-- 推論請求只排入攝影機 mailbox，不把排隊當下的舊影格固定在佇列中。取得 GPU admission 後，worker 才取最新影格，並將實際影格與結果一起交還追蹤；每鏡頭最多一個待完成請求。
+- 每台攝影機最多有一筆待完成的推論請求。取得 GPU 額度後，worker 才選取影格，並將影格與辨識結果一起交給追蹤器。預設選取最新一張。
+- 對於會集中送出數張影格的即時來源，可把 `capture.inference_history_by_camera` 設為 `{"64": 4}`。64 號攝影機會保留最多四張，包含最新一張。worker 依序選取最近 100 毫秒內擷取且尚未辨識的影格，較早的候選格都逾時時取最新一張。重新連線會清除歷史影格。`capture.buffer_frames` 預設為 6，至少要留兩個空位。量測辨識 FPS 時，計算每秒完成辨識的不同影格序號數。
 - 即時標註會用最新影格配上最新分析。保留 YUV 的影格到達時準備標註，編碼器依各輸出的 FPS 取用最新畫面。中繼資料只持有追蹤和幾何資訊。分析結果超過 `overlay_max_age_ms`（預設 1000）或 generation 不符時顯示 `Analysis pending`。Lossless 模式的影格與分析逐格對應。
 - `capture.max_lag_ms` 預設 2000：相對第一個解碼 PTS 的落後量持續增加時重連，避免解碼追不上卻一直累積舊資料；不是攝影機到瀏覽器延遲量測。PTS 明顯倒退也會切換 generation。`read_timeout_ms` 限制可中斷的原生 I/O。
 - `summary.json` 增加 `converted`、`capture_dropped`、`capture_reconnects`、`capture_pool_peak`、`rendered`、`render_skipped`、`render_pending`。trace 增加實際 `source_pts`、`source_lag_ms` 與 `batch_size`，能區分推論跳格、轉換 admission 及標註降載。

@@ -72,8 +72,6 @@ class WorkerSettings(EnvironmentSettings):
     native_micro_batch_size: int = Field(0, ge=0)
     native_library_dirs: Annotated[tuple[str, ...], NoDecode] = ()
     precision: str | None = None
-    model_dir: str = 'models/pt'
-    model_suffix: str = '.pt'
     half: bool = True
     quantize: str | None = None
     batch_size: int = Field(8, ge=1)
@@ -152,20 +150,6 @@ class ModelCatalogSettings(EnvironmentSettings):
         ge=1,
         validation_alias='MODEL_UPLOAD_MAX_BYTES',
     )
-    server_model_keys: str = Field(
-        'yolo26n,yolo26s,yolo26m,yolo26l,yolo26x',
-        validation_alias='DETECT_SERVER_MODEL_KEYS',
-    )
-
-    @property
-    def model_keys(self) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                key.strip()
-                for key in self.server_model_keys.split(',')
-                if key.strip()
-            ),
-        )
 
 
 class WebSocketSettings(EnvironmentSettings):

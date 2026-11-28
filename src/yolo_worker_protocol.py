@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 from typing import Self
 from typing import TypeAlias
@@ -24,16 +23,16 @@ FrameArray: TypeAlias = NDArray[np.uint8]
 
 def _worker_precision_config(
     mode: WorkerPrecisionMode,
-) -> tuple[Path, str, dict[str, PrecisionValue]]:
-    """Map a simplified precision mode to model path and predict kwargs."""
+) -> dict[str, PrecisionValue]:
+    """Return prediction options for the selected precision mode."""
     if mode == 'f32':
-        return Path('models/pt'), '.pt', precision_kwargs(False, 32)
+        return precision_kwargs(False, 32)
     if mode == 'f16':
-        return Path('models/pt'), '.pt', precision_kwargs(True, 16)
+        return precision_kwargs(True, 16)
     if mode == 'int8':
         # TensorRT engine precision is baked into the .engine file. These
         # engines are dynamic batch only and require fixed square 640 inputs.
-        return Path('models/int8_engine'), '.engine', {'rect': False}
+        return {'rect': False}
     raise AssertionError(f'unhandled YOLO worker precision mode: {mode}')
 
 

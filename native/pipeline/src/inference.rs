@@ -35,12 +35,7 @@ impl Input {
     fn select(self) -> Option<SharedFrame> {
         match self {
             Self::Fixed(frame) => Some(frame),
-            Self::Latest { feed, minimum } => feed
-                .borrow()
-                .frame
-                .as_ref()
-                .filter(|f| f.sequence >= minimum)
-                .cloned(),
+            Self::Latest { feed, minimum } => feed.borrow().for_inference(minimum, Instant::now()),
         }
     }
 }
@@ -677,7 +672,7 @@ mod tests {
         let (tx, feed) = watch::channel(Latest {
             frame: Some(first),
             generation: 1,
-            terminal: false,
+            ..Latest::default()
         });
         let pending = Input::Latest { feed, minimum: 1 };
         tx.send_modify(|v| v.frame = None);

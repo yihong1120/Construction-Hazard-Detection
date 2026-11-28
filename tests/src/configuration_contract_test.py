@@ -149,6 +149,23 @@ def test_capture_reconnect_budget_must_cover_initial_delay():
             )
 
 
+def test_capture_inference_history_uses_database_camera_ids(monkeypatch):
+    key = 'STREAM_CAPTURE_INFERENCE_HISTORY_BY_CAMERA'
+    monkeypatch.delenv(key, raising=False)
+    assert CaptureSettings().inference_history_by_camera == {}
+    monkeypatch.setenv(key, '{"64":4,"80":1}')
+    assert CaptureSettings().inference_history_by_camera == {'64': 4, '80': 1}
+
+
+@pytest.mark.parametrize(
+    'value', ['{"0":2}', '{"cam":2}', '{"64":0}', '{"64":5}', '{"64":"4"}'],
+)
+def test_capture_inference_history_rejects_invalid_limits(monkeypatch, value):
+    monkeypatch.setenv('STREAM_CAPTURE_INFERENCE_HISTORY_BY_CAMERA', value)
+    with pytest.raises(ValidationError):
+        CaptureSettings()
+
+
 @pytest.mark.parametrize('ttl', ['3', '15', '45'])
 def test_api_and_worker_share_readiness_ttl(ttl):
     with patch.dict(

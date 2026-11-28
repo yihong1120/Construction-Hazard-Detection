@@ -35,7 +35,7 @@ class WorkerBenchmark:
             for i in range(0, len(frames), args.batch)
         ]
         self.worker = YoloWorker(None)
-        self.worker.precision_args = _worker_precision_config('int8')[2]
+        self.worker.precision_args = _worker_precision_config('int8')
         self.worker.imgsz = 640
         if args.worker == 'rust':
             self.model = create_rust_model(

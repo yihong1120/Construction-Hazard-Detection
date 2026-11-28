@@ -329,10 +329,6 @@ class YoloWorker:
             self.settings.precision,
         )
         if self.precision_mode is None:
-            self.model_dir = Path(
-                self.settings.model_dir,
-            )
-            self.model_suffix = self.settings.model_suffix
             use_half = self.settings.half
             quantize = parse_quantize_value(
                 self.settings.quantize,
@@ -340,9 +336,7 @@ class YoloWorker:
             self.precision_args = precision_kwargs(use_half, quantize)
             self.precision_label = 'legacy'
         else:
-            self.model_dir, self.model_suffix, self.precision_args = (
-                _worker_precision_config(self.precision_mode)
-            )
+            self.precision_args = _worker_precision_config(self.precision_mode)
             self.precision_label = self.precision_mode
         self.pending: dict[str, _WorkerRequest] = {}
         self.batch_size = self.settings.batch_size
@@ -358,11 +352,9 @@ class YoloWorker:
         """Run the worker loop until a stop message is received."""
         logging.basicConfig(level=logging.INFO)
         self.logger.info(
-            '[YOLO-Worker] started on %s precision=%s model_dir=%s suffix=%s',
+            '[YOLO-Worker] started on %s precision=%s',
             self.device,
             self.precision_label,
-            self.model_dir,
-            self.model_suffix,
         )
         try:
             self._run_loop()
@@ -703,7 +695,7 @@ class YoloWorker:
         """Return a cached YOLO model, loading it on first use.
 
         Args:
-            model_key: Key used to construct the model filename.
+            model_key: Published model ID in the stream catalog.
 
         Returns:
             Cached Ultralytics YOLO instance.

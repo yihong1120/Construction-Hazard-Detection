@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import InitVar
+from time import monotonic
+from typing import NamedTuple
 from typing import TYPE_CHECKING
 from typing import TypedDict
 
@@ -43,9 +47,15 @@ class StreamConfig(TypedDict, total=False):
     work_end_hour: int
 
 
+class _InferenceFrame(NamedTuple):
+    frame: np.ndarray
+    timestamp: float
+    sequence: int
+
+
 @dataclass
 class LatestFrameState:
-    """Latest camera frame shared by capture, detection, and publishing."""
+    """Share the latest frame with publishers. Access the state under lock."""
 
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -53,6 +63,50 @@ class LatestFrameState:
     timestamp: float = 0.0
     sequence: int = 0
     generation: int = 0
+    history_depth: InitVar[int] = 1
+    _pending: deque[tuple[float, _InferenceFrame]] = field(
+        init=False, repr=False,
+    )
+
+    def __post_init__(self, history_depth: int) -> None:
+        self._pending = deque(maxlen=history_depth if history_depth > 1 else 0)
+
+    def publish(self, frame: np.ndarray, timestamp: float) -> None:
+        """Update the live frame and retain pending inference inputs."""
+        self.frame = frame
+        self.timestamp = timestamp
+        self.sequence += 1
+        if self._pending.maxlen:
+            self._pending.append((
+                monotonic(), _InferenceFrame(frame, timestamp, self.sequence),
+            ))
+        self.event.set()
+
+    def take_for_inference(self, last_sequence: int) -> _InferenceFrame | None:
+        """Take a fresh pending frame in order, falling back to the latest."""
+        if self._pending:
+            cutoff = monotonic() - 0.100
+            while self._pending:
+                received_at, sample = self._pending.popleft()
+                if (
+                    received_at >= cutoff
+                    and last_sequence < sample.sequence < self.sequence
+                ):
+                    # Keep the event set to drain the burst without a new read.
+                    return sample
+        self.event.clear()
+        if self.frame is None or self.sequence <= last_sequence:
+            return None
+        return _InferenceFrame(self.frame, self.timestamp, self.sequence)
+
+    def invalidate(self) -> None:
+        """Discard frames from the previous capture connection."""
+        self._pending.clear()
+        self.frame = None
+        self.timestamp = 0.0
+        self.sequence += 1
+        self.generation += 1
+        self.event.set()
 
 
 @dataclass

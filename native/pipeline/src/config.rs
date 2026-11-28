@@ -148,6 +148,9 @@ pub struct CaptureSettings {
     pub freeze_seconds: u64,
     pub max_lag_ms: u64,
     pub buffer_frames: usize,
+    /// Number of recent decoded frames eligible for live inference per stream ID.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub inference_history_by_camera: BTreeMap<String, usize>,
 }
 impl Default for CaptureSettings {
     fn default() -> Self {
@@ -161,6 +164,7 @@ impl Default for CaptureSettings {
             freeze_seconds: 15,
             max_lag_ms: 2000,
             buffer_frames: 6,
+            inference_history_by_camera: BTreeMap::new(),
         }
     }
 }
@@ -570,6 +574,15 @@ impl Config {
                 && self.capture.max_convert_fps <= 120
                 && (3..=16).contains(&self.capture.buffer_frames),
             "Invalid capture timeout"
+        );
+        ensure!(
+            self.capture
+                .inference_history_by_camera
+                .iter()
+                .all(|(id, depth)| {
+                    identifier(id) && (1..=self.capture.buffer_frames - 2).contains(depth)
+                }),
+            "Inference history requires a valid camera ID and at least two free capture buffers"
         );
         if self.experimental_replay {
             if let Some(redis) = &self.redis {

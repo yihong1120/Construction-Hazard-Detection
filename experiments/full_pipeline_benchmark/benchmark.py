@@ -248,7 +248,6 @@ def environment(args, root, backend):
         'YOLO_WORKER_PRECISION': 'int8',
         'YOLO_WORKER_ARTIFACT_MANIFEST': str(args.output / 'manifest.json'),
         'YOLO_WORKER_METRICS_INTERVAL_SECONDS': '5',
-        'DETECT_SERVER_MODEL_KEYS': 'yolo26n',
         'STREAM_CAPTURE_BACKEND': 'opencv',
         'OPENCV_FFMPEG_CAPTURE_OPTIONS': 'rtsp_transport;tcp|threads;1',
         'MEDIA_PUBLISH_RTSP_BASE_URL': RTSP,

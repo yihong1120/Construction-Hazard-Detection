@@ -299,68 +299,6 @@ impl NativeEngine {
         self.run_prepared(prepared)
     }
 
-    /// Copy/resize immutable inputs into reusable owned preparation storage.
-    pub fn prepare_surfaces<F>(
-        &mut self,
-        shapes: &[(usize, usize)],
-        pool: Option<&rayon::ThreadPool>,
-        fill: F,
-    ) -> Result<Option<PreparedBatch>, Error>
-    where
-        F: Fn(usize, &crate::core::Layout, &mut [u8]) -> bool + Sync,
-    {
-        use rayon::prelude::*;
-        if shapes.is_empty() || shapes.len() > self.max_batch {
-            return Err(Error::Invalid("Invalid surface batch".into()));
-        }
-        for &(h, w) in shapes {
-            crate::core::validate_dimensions(
-                h,
-                w,
-                h.checked_mul(w).and_then(|n| n.checked_mul(3)).unwrap_or(0),
-            )?;
-        }
-        let rect = self.rect && shapes.iter().all(|s| *s == shapes[0]);
-        let layouts: Vec<_> = shapes
-            .iter()
-            .map(|&(h, w)| layout(h, w, self.size, self.stride, rect))
-            .collect();
-        let first = &layouts[0];
-        let image_bytes = first.h * first.w * 3;
-        let mut pixels = std::mem::take(&mut self.pixels_cache);
-        let needed = image_bytes * shapes.len();
-        if pixels.capacity() < needed {
-            self.workspace_growths += 1;
-        }
-        pixels.resize(needed, 0);
-        let accepted = if let Some(pool) = pool {
-            pool.install(|| {
-                pixels
-                    .par_chunks_mut(image_bytes)
-                    .zip(&layouts)
-                    .enumerate()
-                    .map(|(i, (target, l))| fill(i, l, target))
-                    .reduce(|| true, |a, b| a & b)
-            })
-        } else {
-            pixels
-                .chunks_exact_mut(image_bytes)
-                .zip(&layouts)
-                .enumerate()
-                .fold(true, |ok, (i, (target, l))| fill(i, l, target) & ok)
-        };
-        if !accepted {
-            self.pixels_cache = pixels;
-            return Ok(None);
-        }
-        Ok(Some(PreparedBatch {
-            pixels,
-            shapes: shapes.to_vec(),
-            h: first.h,
-            w: first.w,
-        }))
-    }
-
     /// Each callback must fill its own frame, including its numerical fallback.
     /// A failed frame never discards work performed for another frame.
     pub fn prepare_surfaces_each<F>(
@@ -937,18 +875,7 @@ impl NativeEngine {
     }
 
     pub fn submit_images(&mut self, images: &[Image<'_>]) -> Result<u64, Error> {
-        validate(images, self.max_batch)?;
-        let views: Vec<_> = images
-            .iter()
-            .map(|image| BufferImage {
-                h: image.h,
-                w: image.w,
-                bytes: image.data.len(),
-                pointer: image.data.as_ptr(),
-            })
-            .collect();
-        // SAFETY: immutable image storage lives through preparation.
-        let prepared = unsafe { self.prepare_buffers(&views) }?;
+        let prepared = self.prepare_images(images)?;
         self.submit_prepared(prepared)
     }
     pub fn submit_prepared(&mut self, batch: PreparedBatch) -> Result<u64, Error> {

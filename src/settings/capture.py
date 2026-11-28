@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Annotated
 from typing import Literal
 
 from pydantic import Field
@@ -23,6 +24,10 @@ class CaptureSettings(EnvironmentSettings):
     timestamp_sample_seconds: float = Field(1, ge=0.1, allow_inf_nan=False)
     open_timeout_ms: int = Field(5000, gt=0)
     read_timeout_ms: int = Field(5000, gt=0)
+    inference_history_by_camera: dict[
+        Annotated[str, Field(pattern=r'^[1-9][0-9]*$')],
+        Annotated[int, Field(strict=True, ge=1, le=4)],
+    ] = Field(default_factory=dict)
 
     @model_validator(mode='after')
     def ordered_delays(self):

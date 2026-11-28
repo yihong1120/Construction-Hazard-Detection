@@ -139,8 +139,8 @@ pub fn spawn(
                 }
             }
             let finishing = receiver.has_changed().is_err();
-            let latest = source.borrow_and_update().clone();
-            let Some(frame) = latest.frame else {
+            let frame = source.borrow_and_update().frame.clone();
+            let Some(frame) = frame else {
                 if finishing {
                     break;
                 }
@@ -369,7 +369,7 @@ mod tests {
                     source_lag_ms: 0.,
                 })),
                 generation,
-                terminal: false,
+                ..Latest::default()
             })
             .unwrap();
             if sequence == 1 {
@@ -481,7 +481,7 @@ mod tests {
                 .send(Latest {
                     frame: Some(frame.clone()),
                     generation: 1,
-                    terminal: false,
+                    ..Latest::default()
                 })
                 .unwrap();
             tokio::time::timeout(Duration::from_secs(3), output.changed())
@@ -563,7 +563,6 @@ mod tests {
             source
                 .send(Latest {
                     generation: 1,
-                    terminal: false,
                     frame: Some(Arc::new(Frame {
                         pixels: pool.take(),
                         host: Some(decoder.retain_host(640, 352).unwrap()),
@@ -578,6 +577,7 @@ mod tests {
                         source_pts: None,
                         source_lag_ms: 0.0,
                     })),
+                    ..Latest::default()
                 })
                 .unwrap();
             tokio::time::timeout(timeout, output.changed())

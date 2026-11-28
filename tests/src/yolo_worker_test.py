@@ -947,11 +947,9 @@ def test_get_model_returns_cached_model() -> None:
 
 
 def test_get_model_raises_when_model_missing(
-    tmp_path: Any,
     monkeypatch: Any,
 ) -> None:
     worker = yolo_worker.YoloWorker(None)
-    worker.model_dir = tmp_path
 
     monkeypatch.setattr(
         yolo_worker,
@@ -975,8 +973,7 @@ def test_get_model_loads_and_caches_model(
 
     monkeypatch.setattr(yolo_worker, 'YOLO', FakeYOLO)
     worker = yolo_worker.YoloWorker(None)
-    worker.model_dir = tmp_path
-    model_path = tmp_path / f'best_yolo26n{worker.model_suffix}'
+    model_path = tmp_path / 'published-model.pt'
     model_path.write_text('model')
     entry = model_registry.ModelEntry(
         id='yolo26n',

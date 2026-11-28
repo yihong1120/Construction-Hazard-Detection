@@ -19,13 +19,13 @@ from src.native_postprocess import load_postprocess_backend
 from src.native_postprocess import RustDangerDetector
 from src.native_postprocess import RustYoloDetector
 from src.redis_client import RedisManager
-from src.settings.inference import ModelCatalogSettings
 from src.settings.inference import WorkerSettings
 from src.settings.media import MediaPublishSettings
 from src.settings.postprocess import PostprocessSettings
 from src.stream_capture import StreamCapture
 from src.stream_identity import stream_identity
 from src.stream_media import StreamPublisherGroup
+from src.stream_runtime_state import LatestFrameState
 from src.stream_runtime_state import StreamConfig
 from src.stream_runtime_state import StreamMediaSettings
 from src.stream_runtime_state import StreamRuntime
@@ -98,6 +98,8 @@ async def _run_single_stream(
     stream_name = cfg['stream_name']
     media_path = build_media_path(site, stream_name)
     streaming_capture = StreamCapture(stream_url=video_url)
+    history_by_camera = streaming_capture.settings.inference_history_by_camera
+    camera_id = str(cfg.get('stream_id', ''))
     yolo_detector = detector_factory(
         model_key=model_key,
         output_folder=site,
@@ -150,6 +152,9 @@ async def _run_single_stream(
             delivery=delivery,
             metadata_key=metadata_key,
             media=StreamMediaSettings(media_path, media_settings),
+            latest_frame=LatestFrameState(
+                history_depth=history_by_camera.get(camera_id, 1),
+            ),
         )
         runtime.clock.warning_event_throttle_seconds = (
             stream_detection._warning_event_throttle_seconds()
@@ -219,18 +224,6 @@ async def _run_decoupled_media_server_loop(runtime: StreamRuntime) -> None:
 
 
 def _validate_server_model_key(model_key: str) -> None:
-    """Ensure a server model key is configured.
-
-    Args:
-        model_key: YOLO server model key.
-
-    Raises:
-        RuntimeError: If the model key is not configured.
-    """
+    """Validate the key format before the worker looks it up in the catalog."""
     if not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,119}', model_key):
         raise RuntimeError('Invalid model key')
-
-
-def _server_model_keys() -> tuple[str, ...]:
-    """Return configured YOLO server model keys in stable order."""
-    return ModelCatalogSettings().model_keys
