@@ -81,6 +81,7 @@ WebSocket 握手接受 `Authorization: Bearer` 標頭，瀏覽器可改用 `toke
 
 - 啟用 `account_management` 並設定 `deployment_scope`，即可查詢所屬群組的帳號和工地，以及增減工地成員。清單使用 `account_read`，成員修改使用 `account_manage`。
 - 在 Keycloak 註冊 `/bff/auth/oidc/callback` 回呼網址。公開 API 根網址須與部署資料列相符。將 `/bff/` 路由到 Rust API，透過環境變數提供用戶端密鑰和至少 32 位元組的獨立工作階段加密密鑰。每個已啟用的上游都可指向 Rust 監聽位址，BFF 會帶入已簽章的使用者權杖。
+- 若要啟用以個人額度使用公司助理的聊天入口，將 `bff.upstreams.company_agent_chat` 指向介接服務的本機回環位址，例如 `http://127.0.0.1:28082/api/visionnaire/chat`。前端可於 `/bff/chat/v1` 操作聊天室、訊息、附件、工作狀態、取消及成果下載，沿用現有工作階段和 CSRF 驗證。介接服務需驗證此存取權杖的簽發者和受眾。原聊天 API 繼續使用 `bff.upstreams.chat`。
 - 設定 `media_auth` 和 `playback`。將播放清單路由到 Rust API，媒體路由透過反向代理呼叫 `/media-auth`。讓 `playback.demand_prefix` 和 `metadata_prefix` 與攝影機流程使用相同 Redis 前綴。設定 `deployment_scope` 後，鏡頭清單、新播放與連線中的中繼資料會重新確認 PostgreSQL 工地成員資格。已發行的媒體授權有期限，續期需通過驗證。
 - 應用程式資料表位於其他 schema 時，請設定 `RUST_API_DATABASE_SCHEMA`。PostgreSQL 會先搜尋指定的 schema，再搜尋 `public`。請依啟用的路由授予資料庫角色必要的存取權限。
 - 設定 `violation_history` 可啟用歷史、統計、證據圖片、回饋與含稽核的審核。將 `write_uploads` 設為 `true` 時，Rust `/upload` 會寫入部署的 `violations` 資料表。使用現有的 `evidence_write_operations` 日誌及已發布或封存模型目錄，並讓 API 服務帳號和 systemd 單元可寫入 `media_root` 的絕對路徑。攝影機工作者需要 `evidence_write`，已繫結且啟用的 PostgreSQL 帳號還需具備工地和模型權限。

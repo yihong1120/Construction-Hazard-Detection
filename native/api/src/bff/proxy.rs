@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::File,
     net::{IpAddr, SocketAddr},
     os::fd::AsRawFd,
@@ -49,6 +50,7 @@ pub(super) fn allowed_service(value: &str) -> bool {
             | "detect"
             | "detection"
             | "chat"
+            | "company_agent_chat"
             | "files"
             | "file_manage"
             | "ai_access"
@@ -57,6 +59,13 @@ pub(super) fn allowed_service(value: &str) -> bool {
 }
 
 pub(super) fn allowed_upstream(service: &str, upstream: &Url, public: &Url) -> bool {
+    if service == "company_agent_chat" {
+        return loopback(upstream)
+            && matches!(
+                upstream.path(),
+                "/api/visionnaire/chat" | "/api/visionnaire/chat/"
+            );
+    }
     if loopback(upstream) && upstream.path() == "/" {
         return true;
     }
@@ -258,8 +267,17 @@ fn allowed_path(service: &str, method: &Method, path: &[&str]) -> bool {
             ] => read,
             _ => false,
         },
-        // Chat's API is maintained upstream. Its configured public path is
-        // fixed, and the existing upstream remains responsible for authorisation.
+        "chat" if path.first() == Some(&"v1") => match path {
+            ["v1", "chats"] => *method == Method::GET || post,
+            ["v1", "chats" | "jobs" | "artifacts", id] => {
+                uuid::Uuid::parse_str(id).is_ok() && *method == Method::GET
+            }
+            ["v1", "chats", id, "messages" | "attachments"] | ["v1", "jobs", id, "cancel"] => {
+                uuid::Uuid::parse_str(id).is_ok() && post
+            }
+            _ => false,
+        },
+        // Unversioned chat remains on the configured legacy service.
         "chat" => read || post || put || patch || delete,
         _ => false,
     }
@@ -485,17 +503,15 @@ pub(super) async fn chat_root(
     forward(State(state), Path(("chat".into(), String::new())), request).await
 }
 
-pub(super) async fn forward(
-    State(state): State<AppState>,
-    Path((service, path)): Path<(String, String)>,
-    request: Request,
-) -> Result<Response, ApiError> {
-    let bff = state_bff(&state, request.headers())?;
-    let path = segments(&path).ok_or_else(route_denied)?;
-    if !allowed_path(&service, request.method(), &path) {
-        return Err(route_denied());
+fn upstream_for<'a>(
+    upstreams: &'a HashMap<String, Url>,
+    service: &str,
+    path: &[&str],
+) -> Option<&'a Url> {
+    if service == "chat" && path.first() == Some(&"v1") {
+        return upstreams.get("company_agent_chat");
     }
-    let alias = match service.as_str() {
+    let alias = match service {
         "streaming_web" => "streaming",
         "streaming" => "streaming_web",
         "detect" => "detection",
@@ -506,13 +522,20 @@ pub(super) async fn forward(
         "file_manage" => "files",
         service => service,
     };
-    let origin = bff
-        .0
-        .urls
-        .upstreams
-        .get(&service)
-        .or_else(|| bff.0.urls.upstreams.get(alias))
-        .ok_or_else(route_denied)?;
+    upstreams.get(service).or_else(|| upstreams.get(alias))
+}
+
+pub(super) async fn forward(
+    State(state): State<AppState>,
+    Path((service, path)): Path<(String, String)>,
+    request: Request,
+) -> Result<Response, ApiError> {
+    let bff = state_bff(&state, request.headers())?;
+    let path = segments(&path).ok_or_else(route_denied)?;
+    if !allowed_path(&service, request.method(), &path) {
+        return Err(route_denied());
+    }
+    let origin = upstream_for(&bff.0.urls.upstreams, &service, &path).ok_or_else(route_denied)?;
     let target = upstream_url(origin, &path, request.uri())?;
     let method = request.method().clone();
     let mutation = !matches!(method, Method::GET | Method::HEAD);
@@ -622,13 +645,14 @@ pub(super) async fn forward(
         && media_type == "application/octet-stream"
         && matches!(service.as_str(), "detect" | "detection")
         && path == ["get_new_model"];
-    let file_download = files(&service)
-        && status.is_success()
-        && matches!(
-            path.as_slice(),
-            ["download", "temp", _] | ["drafts", _, "attachments", _]
-        )
-        && !mutation;
+    let file_download = status.is_success()
+        && !mutation
+        && ((files(&service)
+            && matches!(
+                path.as_slice(),
+                ["download", "temp", _] | ["drafts", _, "attachments", _]
+            ))
+            || (service == "chat" && matches!(path.as_slice(), ["v1", "artifacts", _])));
     if (file_download || model_file || method == Method::HEAD)
         && let Some(length) = upstream.headers().get(header::CONTENT_LENGTH)
     {
@@ -762,6 +786,73 @@ mod tests {
             target.as_str(),
             "https://demo.example/hazard/api/chat/chat/upload-policy?kind=pdf"
         );
+    }
+
+    #[test]
+    fn keeps_company_agent_and_legacy_chat_routes_separate() {
+        let public = Url::parse("https://demo.example/hazard/api").unwrap();
+        let legacy = public.join("/hazard/api/chat/").unwrap();
+        let agent = Url::parse("http://127.0.0.1:3000/api/visionnaire/chat").unwrap();
+        let mut upstreams = HashMap::from([("chat".to_string(), legacy.clone())]);
+        let path = ["v1", "chats"];
+        assert!(upstream_for(&upstreams, "chat", &path).is_none());
+        assert!(allowed_upstream("company_agent_chat", &agent, &public));
+        assert!(!allowed_upstream("company_agent_chat", &legacy, &public));
+        assert!(!allowed_upstream(
+            "company_agent_chat",
+            &agent.join("/").unwrap(),
+            &public
+        ));
+        upstreams.insert("company_agent_chat".to_string(), agent.clone());
+        assert_eq!(upstream_for(&upstreams, "chat", &["chats"]), Some(&legacy));
+        let target = upstream_url(
+            upstream_for(&upstreams, "chat", &path).unwrap(),
+            &path,
+            &"/bff/chat/v1/chats".parse().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            target.as_str(),
+            "http://127.0.0.1:3000/api/visionnaire/chat/v1/chats"
+        );
+    }
+
+    #[test]
+    fn company_agent_chat_exposes_only_owner_operations_and_request_credentials_stay_server_side() {
+        let id = "359d0d8a-6882-4b36-9360-cf84194857d9";
+        for (method, suffix) in [
+            (Method::GET, "chats".into()),
+            (Method::POST, "chats".into()),
+            (Method::GET, format!("chats/{id}")),
+            (Method::POST, format!("chats/{id}/messages")),
+            (Method::POST, format!("chats/{id}/attachments")),
+            (Method::GET, format!("jobs/{id}")),
+            (Method::POST, format!("jobs/{id}/cancel")),
+            (Method::GET, format!("artifacts/{id}")),
+        ] {
+            let versioned = format!("v1/{suffix}");
+            let path = segments(&versioned).unwrap();
+            assert!(allowed_path("chat", &method, &path));
+            assert!(!allowed_path("company_agent_chat", &method, &path));
+        }
+        assert!(!allowed_path("chat", &Method::GET, &["v1", "jobs"]));
+        assert!(!allowed_path("chat", &Method::GET, &["v1", "chats", "123"]));
+        assert!(!allowed_path(
+            "chat",
+            &Method::DELETE,
+            &["v1", "artifacts", id]
+        ));
+        let mut browser = HeaderMap::new();
+        for name in [
+            "authorization",
+            "cookie",
+            "x-user-id",
+            "x-openwebui-user-id",
+            "x-forwarded-user",
+        ] {
+            browser.insert(name, HeaderValue::from_static("browser-supplied"));
+        }
+        assert!(proxied_headers(&browser).is_empty());
     }
 
     #[test]

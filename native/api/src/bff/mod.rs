@@ -93,7 +93,7 @@ impl Config {
                 let url = web_url(endpoint)?;
                 ensure!(
                     proxy::allowed_upstream(service, &url, &public_base),
-                    "BFF upstreams require a loopback origin or the public Chat API path"
+                    "Invalid BFF upstream origin or path for {service}"
                 );
                 Ok((service.clone(), url))
             })
