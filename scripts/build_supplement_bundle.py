@@ -430,7 +430,7 @@ def main():
         shutil.copy2(ROOT / 'scripts' / name, workspace / 'scripts' / name)
     for name in ['__init__.py', 'geometry.py', 'danger_detector.py']:
         shutil.copy2(ROOT / 'src' / name, workspace / 'src' / name)
-    for name in ['pyproject.toml', 'requirements.txt', 'uv.lock']:
+    for name in ['pyproject.toml', 'uv.lock']:
         shutil.copy2(ROOT / name, workspace / name)
     environment = dict(
         python=sys.version,
@@ -476,7 +476,7 @@ def main():
 不需要連接攝影機、資料庫、通知服務或取得外部圖片。
 字型依既有系統路徑使用 NotoSansCJK-Regular.ttc / Bold.ttc。
 另附 YOLO26n 權重供研究篩選核對，正式圖一律使用 YOLO26m。
-pyproject.toml、requirements.txt、uv.lock 為專案參考檔；實際產圖環境以 environment.json 為準。
+pyproject.toml 與 uv.lock 記錄專案相依套件，實際產圖環境請參閱 environment.json。
 research/ 的研究腳本保留原始路徑及選樣過程，部分需要完整訓練資料集；正式圖的重跑不依賴它們。
 """,
     )

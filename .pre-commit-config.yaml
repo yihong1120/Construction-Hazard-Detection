@@ -9,7 +9,6 @@ repos:
     -   id: double-quote-string-fixer
     -   id: name-tests-test
         exclude: ^tests/private_redis\.py$
-    -   id: requirements-txt-fixer
 -   repo: https://github.com/asottile/setup-cfg-fmt
     rev: v3.3.0
     hooks:

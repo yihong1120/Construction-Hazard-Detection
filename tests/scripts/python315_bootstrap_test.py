@@ -83,3 +83,60 @@ class NativeWheelCacheTest(unittest.TestCase):
                 manifest['sha256'][wheel.name],
                 hashlib.sha256(wheel.read_bytes()).hexdigest(),
             )
+
+    def test_install_uses_lockfile_export_and_local_wheels(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            wheels = repo / 'wheels/python315'
+            wheels.mkdir(parents=True)
+            (
+                wheels / (
+                    f'onnxruntime-{bootstrap.ORT_VERSION}'
+                    '-cp315-cp315-linux_x86_64.whl'
+                )
+            ).touch()
+            (
+                wheels / (
+                    f'tensorrt_cu13_bindings-{bootstrap.TRT_VERSION}'
+                    '-1-cp315-cp315-linux_x86_64.whl'
+                )
+            ).touch()
+            for options in (['--cpu-only'], []):
+                args = ['bootstrap.py', '--cache-dir', str(repo), *options]
+                with (
+                    self.subTest(options=options),
+                    patch.object(bootstrap, 'REPO', repo),
+                    patch.object(bootstrap.sys, 'argv', args),
+                    patch.object(bootstrap, 'run') as run,
+                ):
+                    bootstrap.main()
+                    commands = [call.args for call in run.call_args_list]
+                    export, install, check = commands[-3:]
+                    self.assertEqual(export[:3], ('uv', 'export', '--locked'))
+                    self.assertIn('--all-extras', export)
+                    self.assertEqual(
+                        export[export.index('--no-extra') + 1], 'yolo-gpu',
+                    )
+                    self.assertIn('--no-emit-project', export)
+                    requirements = export[export.index('--output-file') + 1]
+                    self.assertNotEqual(requirements.parent, repo)
+                    self.assertFalse(requirements.parent.exists())
+                    self.assertEqual(
+                        install, (
+                            'uv', 'pip', 'install', '--python',
+                            bootstrap.sys.executable,
+                            '--find-links', wheels, '-r', requirements,
+                            f'onnxruntime=={bootstrap.ORT_VERSION}',
+                        ),
+                    )
+                    self.assertEqual(
+                        check, (
+                            'uv', 'pip', 'check', '--python',
+                            bootstrap.sys.executable,
+                        ),
+                    )
+                    trt = f'tensorrt=={bootstrap.TRT_VERSION}'
+                    self.assertEqual(
+                        any(trt in cmd for cmd in commands),
+                        not options,
+                    )

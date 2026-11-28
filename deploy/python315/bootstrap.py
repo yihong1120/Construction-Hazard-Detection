@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -371,18 +372,20 @@ def main() -> None:
                 'https://pypi.nvidia.com',
                 f'tensorrt=={TRT_VERSION}',
             )
-        run(
-            'uv',
-            'pip',
-            'install',
-            '--python',
-            sys.executable,
-            '--find-links',
-            wheels,
-            '-r',
-            REPO / 'requirements.txt',
-            f'onnxruntime=={ORT_VERSION}',
-        )
+        # Install into the interpreter running this script, alongside wheels
+        # that were built locally and are outside the project lockfile.
+        with tempfile.TemporaryDirectory() as directory:
+            requirements = Path(directory) / 'requirements.txt'
+            run(
+                'uv', 'export', '--locked', '--all-extras',
+                '--no-extra', 'yolo-gpu', '--no-emit-project', '--no-hashes',
+                '--quiet', '--output-file', requirements,
+            )
+            run(
+                'uv', 'pip', 'install', '--python', sys.executable,
+                '--find-links', wheels, '-r', requirements,
+                f'onnxruntime=={ORT_VERSION}',
+            )
         run('uv', 'pip', 'check', '--python', sys.executable)
 
 
