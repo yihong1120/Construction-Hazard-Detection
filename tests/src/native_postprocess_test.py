@@ -18,6 +18,7 @@ from src.danger_detector import DangerDetector
 from src.native_postprocess import load_postprocess_backend
 from src.native_postprocess import RustDangerDetector
 from src.native_postprocess import RustYoloDetector
+from src.settings.capture import CaptureSettings
 from src.settings.postprocess import PostprocessSettings
 from src.yolo_detector import YoloDetector
 
@@ -223,7 +224,9 @@ class NativePostprocessTest(unittest.IsolatedAsyncioTestCase):
             'model_key': 'yolo26n', 'site': 'test', 'stream_name': 'camera',
             'recognition_enabled': True, 'detection_items': {},
         }
-        capture = AsyncMock()
+        capture = SimpleNamespace(
+            settings=CaptureSettings(), release_resources=AsyncMock(),
+        )
         worker = AsyncMock()
         redis = SimpleNamespace(
             redis=SimpleNamespace(get=AsyncMock(return_value=None)),
@@ -240,7 +243,9 @@ class NativePostprocessTest(unittest.IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
         ) as loop:
             await processor._run_single_stream(cfg, object(), object())
-        runtime = loop.await_args.args[0]
+        awaited = loop.await_args
+        assert awaited is not None
+        runtime = awaited.args[0]
         self.assertIsInstance(runtime.detector, RustYoloDetector)
         self.assertIsInstance(runtime.danger, RustDangerDetector)
         delivery.return_value.close.assert_called_once()

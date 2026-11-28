@@ -195,7 +195,7 @@ jobs:
         RUSTUP_TOOLCHAIN: 1.93.1
       run: |
         sudo apt-get update
-        sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswscale-dev pkg-config
+        sudo apt-get install -y ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev pkg-config
         cargo build --locked --manifest-path native/pipeline/Cargo.toml
         python -m scripts.validate_rust_pipeline --binary native/pipeline/target/debug/construction-pipeline
     - name: Test with pytest

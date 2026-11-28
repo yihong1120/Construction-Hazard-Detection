@@ -407,7 +407,11 @@ class GlobalArchiveCapacityTest(unittest.TestCase):
         directory = OutboxDirectory(self.root, settings)
         with self.assertRaisesRegex(RuntimeError, 'crash'):
             with directory.locked() as index:
-                directory.trim_archives(index)
+                # Both evictions must precede the simulated index rollback.
+                with patch(
+                    'src.outbox_directory.time.monotonic', return_value=0,
+                ):
+                    directory.trim_archives(index)
                 raise RuntimeError('crash')
         with directory.locked() as index:
             self.assertEqual(
