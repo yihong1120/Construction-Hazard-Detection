@@ -46,15 +46,7 @@
    </a>
 </div>
 
-這是一套用於工地即時影像的 AI 安全監測系統。下文介紹以 `main.py` 啟動的
-Python 流程，包含串流處理模組 `src/stream_processor.py`、本機 YOLO 工作者、
-MediaMTX 直播串流發布、PostgreSQL 紀錄、Redis 即時狀態協調，以及多個 FastAPI 服務。
-
-[獨立 Rust 攝影機流程](native/pipeline/README-zh-tw.md)支援影像擷取、TensorRT 推論、
-危害分析與多語標註，並透過 PostgreSQL 持久化佇列保存與派送事件。指南包含
-`construction-pipeline` 的建置、執行與驗證步驟。
-
-[獨立 Rust 發行預覽版](deploy/rust-runtime/README-zh-tw.md)提供攝影機流程與 Rust HTTP API 的建置、服務單元及隔離驗證方式。
+這是一套用於工地即時影像的 AI 安全監測系統。
 
 ## 可偵測項目
 
@@ -179,11 +171,18 @@ Flutter 前端原始碼維護於獨立的
 1. PostgreSQL 儲存工地、使用者、串流設定與違規紀錄。
 2. Redis 儲存驗證與工作階段快取、通知權杖快取，以及直播協調狀態。
 3. MediaMTX 接收 RTSP 串流，並提供 HLS／WebRTC 播放。
-4. `main.py` 輪詢串流設定，並為每支啟用的攝影機啟動一個串流程序。
+4. `main.py` 輪詢串流設定，並為每支啟用的攝影機啟動一個串流程序，由 `src/stream_processor.py` 處理影像。
 5. 本機 YOLO 工作者透過共享記憶體，讓多支攝影機共用 GPU 推論資源。
+6. FastAPI 服務負責資料管理、通知、串流中繼資料與違規紀錄。
 
 獨立 YOLO 服務適用於 API 測試或單獨部署。多鏡頭高吞吐量處理建議使用
 `src/yolo_worker.py` 的本機工作者模式。
+
+[獨立 Rust 攝影機流程](native/pipeline/README-zh-tw.md)支援影像擷取、TensorRT 推論、
+危害分析與多語標註，並透過 PostgreSQL 持久化佇列保存與派送事件。指南包含
+`construction-pipeline` 的建置、執行與驗證步驟。
+
+[獨立 Rust 發行預覽版](deploy/rust-runtime/README-zh-tw.md)提供攝影機流程與 Rust HTTP API 的建置、服務單元及隔離驗證方式。
 
 ## Rust 後處理
 

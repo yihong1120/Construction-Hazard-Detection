@@ -46,15 +46,7 @@
    </a>
 </div>
 
-AI-assisted construction-site safety monitoring for live cameras. The current
-runtime is centred on `main.py`, `src/stream_processor.py`, local YOLO worker
-processes, MediaMTX live publishing, PostgreSQL records, Redis coordination,
-and FastAPI services for management, notifications, streaming metadata, and
-violation records.
-
-The optional [standalone Rust camera pipeline](native/pipeline/README.md) supports camera capture, TensorRT inference, hazard analysis, multilingual overlays, and PostgreSQL-backed event delivery. The guide covers building, running, and validating the pipeline.
-
-The [isolated Rust release preview](deploy/rust-runtime/README.md) packages the camera pipeline and the Rust HTTP API for validation with separate service units and data stores.
+AI-assisted construction-site safety monitoring for live cameras.
 
 ## What It Detects
 
@@ -190,12 +182,17 @@ Use database mode unless you are testing a short-lived local JSON config.
    coordination keys.
 3. MediaMTX serves RTSP ingest plus HLS/WebRTC playback.
 4. `main.py` polls stream configuration and starts one stream process per active
-   camera.
+   camera to run `src/stream_processor.py`.
 5. Local YOLO workers share GPU inference across cameras through shared memory.
+6. FastAPI services handle management, notifications, streaming metadata and violation records.
 
 The standalone YOLO server remains available for API testing or separate
 deployment, but the recommended high-throughput local path is the YOLO worker
 mode in `src/yolo_worker.py`.
+
+The optional [standalone Rust camera pipeline](native/pipeline/README.md) supports camera capture, TensorRT inference, hazard analysis, multilingual overlays, and PostgreSQL-backed event delivery. The guide covers building, running, and validating the pipeline.
+
+The [isolated Rust release preview](deploy/rust-runtime/README.md) packages the camera pipeline and the Rust HTTP API for validation with separate service units and data stores.
 
 ## Rust Postprocessing
 
