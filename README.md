@@ -1,6 +1,22 @@
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
 # Construction Hazard Detection
 
 <img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI-driven construction safety monitoring banner">
+
+<div align="center">
+   <a href="examples/YOLO_server_api">Server API</a> |
+   <a href="examples/local_notification_server">FCM Notification Server</a> |
+   <a href="examples/violation_records">Violation Records Server</a> |
+   <a href="examples/bff">Web BFF</a> |
+   <a href="https://github.com/yihong1120/visionnaire-flutter">Flutter App</a> |
+   <a href="examples/db_management">Data Management Server</a> |
+   <a href="examples/streaming_web">Streaming Web</a> |
+   <a href="examples/mcp_server">MCP Server</a> |
+   <a href="examples/YOLO_data_augmentation">Data Augmentation</a> |
+   <a href="examples/YOLO_evaluation">Evaluation</a> |
+   <a href="examples/YOLO_train">Train</a>
+</div>
 
 <div align="center">
    <a href="https://www.python.org/downloads/">
@@ -30,25 +46,6 @@
    <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection">
       <img src="https://img.shields.io/badge/HuggingFace-Model%20Repo-yellow?logo=huggingface" alt="Hugging Face Model Repo">
    </a>
-</div>
-
-<p align="center">
-  <a href="./README.md">🇬🇧 English (UK)</a> |
-  <a href="./README-zh-tw.md">🇹🇼 繁體中文（台灣）</a>
-</p>
-
-<div align="center">
-   <a href="examples/YOLO_server_api">Server API</a> |
-   <a href="examples/local_notification_server">FCM Notification Server</a> |
-   <a href="examples/violation_records">Violation Records Server</a> |
-   <a href="examples/bff">Web BFF</a> |
-   <a href="https://github.com/yihong1120/visionnaire-flutter">Flutter App</a> |
-   <a href="examples/db_management">Data Management Server</a> |
-   <a href="examples/streaming_web">Streaming Web</a> |
-   <a href="examples/mcp_server">MCP Server</a> |
-   <a href="examples/YOLO_data_augmentation">Data Augmentation</a> |
-   <a href="examples/YOLO_evaluation">Evaluation</a> |
-   <a href="examples/YOLO_train">Train</a>
 </div>
 
 AI-assisted construction-site safety monitoring for live cameras. The current
