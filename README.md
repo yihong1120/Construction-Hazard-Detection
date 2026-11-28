@@ -218,7 +218,7 @@ See [Rust GPU worker setup and the 32-camera IPC test](native/inference/README.m
 
 The Rust worker reads leased shared-memory frames without a full-frame bytes
 snapshot. Geometry libraries load when an area check needs them. See the
-[copy-reduction measurements and loading behaviour](native/inference/README.md#共享影格快照減量).
+[copy-reduction measurements and loading behaviour](native/inference/README.md#reducing-shared-frame-snapshots).
 
 The next increment adds reusable inference workspaces, cached safety-area
 geometry, native MST selection and overlay blending, plus an opt-in Rust/FFmpeg
@@ -230,24 +230,25 @@ measured about 4% faster at batch 1 and 5% slower at batch 8 on 1080p frames;
 asynchronous execution stays off by default. A separate device-media experiment
 connects NVDEC, GPU preprocessing and overlays, TensorRT and NVENC. It remains
 opt-in pending colour and detection parity with the existing pipeline.
-See [GPU resource management and device-media validation](native/inference/README.md#跨程序-gpu-資源與非同步推論).
+See [GPU resource management and device-media validation](native/inference/README.md#cross-process-gpu-resources-and-asynchronous-inference).
 
 ## Quick Start
 
 ### 1. Prepare Python
 
 The project requires Python `>=3.15,<3.16` and uses PEP 810 explicit lazy imports.
-For the shared API runtime:
+Python dependencies and optional extras are declared in [pyproject.toml](pyproject.toml).
+[uv.lock](uv.lock) records the resolved versions for Linux x86_64. From the
+repository root, install the shared API runtime in the project's `.venv`:
 
 ```bash
 uv sync --locked
 ```
 
-For complete training and INT8 TensorRT export on Python 3.15, run in the target environment:
+For training and INT8 TensorRT export, run the bootstrap with that same interpreter:
 
 ```bash
-conda activate construction_env
-python deploy/python315/bootstrap.py
+.venv/bin/python deploy/python315/bootstrap.py
 ```
 
 This uses official PyTorch CUDA 13.0 CPython 3.15 wheels and builds ONNX Runtime
@@ -256,15 +257,19 @@ It requires Linux x86_64, standard CPython 3.15 with the GIL enabled, `uv`, `git
 a C++20 compiler and CUDA development headers (`/usr/local/cuda/include` by default;
 set `CUDA_HOME` to override). Local wheels are written to `wheels/python315/`.
 Allow tens of GB of disk space for the first build; use `--jobs 4` to reduce build
-memory usage or `--build-only` to skip installation. These are local native builds,
-not official Microsoft/NVIDIA Python 3.15 support. Run the bootstrap on a new host
-rather than only installing `requirements.txt`.
+memory usage or `--build-only` to skip installation. The project builds these
+native packages locally from the pinned upstream sources.
 
 For CPU calibration, development and tests without TensorRT or CUDA headers,
-run `python deploy/python315/bootstrap.py --cpu-only` instead. The bootstrap
+run `.venv/bin/python deploy/python315/bootstrap.py --cpu-only`. The bootstrap
 installs pinned ONNX Runtime/TensorRT builds separately from the registry-only
 `uv.lock`; `uv sync` alone does not install these native packages. CI uses this
 CPU path, and the GPU Docker base builds its native wheels inside the image.
+After the bootstrap, use `uv run --no-sync` to keep those local wheels in the environment.
+
+For a tool that requires a pip requirements file, export the extras it uses. For
+example, `uv export --locked --no-emit-project --extra training -o /tmp/requirements.txt`
+produces the training dependency list on demand.
 
 On Python 3.15, `examples/YOLO_train/export_int8_trt.py` and `export_int8_engine.py` use ONNX Runtime CPU
 calibration to produce an INT8 Q/DQ graph and TensorRT to build and execute the GPU
@@ -277,9 +282,9 @@ images install their own `streaming`, `violation`, `notification`, or `yolo`
 extra; use `--extra yolo-gpu` only on CUDA/TensorRT hosts.
 
 
-Use `uv sync --extra social-notifications` for multi-platform notifications,
-or `uv sync --extra mcp --extra social-notifications` with MCP. Install
-`uv sync --extra training` for the registry training dependencies; use the
+Use `uv sync --locked --extra social-notifications` for multi-platform notifications,
+or `uv sync --locked --extra mcp --extra social-notifications` with MCP. Install
+`uv sync --locked --extra training` for the registry training dependencies; use the
 bootstrap above to include native calibration/export dependencies.
 
 Optional inference and notification dependencies are declared with `lazy import`
@@ -296,8 +301,9 @@ hf download yihong1120/Construction-Hazard-Detection \
   --local-dir .
 ```
 
-Expected worker model filenames are `models/pt/best_<model_key>.pt`, for
-example `models/pt/best_yolo26n.pt`.
+The worker resolves each stream's `model_key` through the published model
+catalogue. Its entry identifies the checkpoint and SHA-256. Downloading a file
+such as `models/pt/best_yolo26n.pt` alone does not publish it.
 
 ### 3. Create `.env`
 
@@ -334,7 +340,7 @@ YOLO_WORKER_RING_SLOT_CLEANUP_SECONDS=120
 YOLO_WORKER_BATCH_SIZE=8
 YOLO_WORKER_BATCH_WAIT_MS=10
 YOLO_WORKER_PRECISION=f16
-# f32/f16 use models/pt/*.pt; int8 uses models/int8_engine/*.engine.
+# For INT8, YOLO_WORKER_ARTIFACT_MANIFEST maps a published checkpoint to its engine.
 
 # Each camera keeps a bounded shared-memory frame ring and receives results on
 # its own queue. For Docker, set YOLO_WORKER_SHM_SIZE high enough for

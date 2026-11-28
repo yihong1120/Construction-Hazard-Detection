@@ -1,27 +1,22 @@
-# Rust 共用 YOLO worker
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-Rust GPU 推論已接入 `src/yolo_worker.py`，從實驗程式提升為可選用的正式後端。
-保留現有 camera shared-memory ring、latest-frame 排程、同模型批次、每鏡頭回覆
-queue、startup lock、catalog 權限與 artifact／manifest SHA256 驗證。
+# Shared Rust YOLO worker
 
-每個共用 worker 的每個已載入模型持有一個 engine，攝影機不各自建立模型。
-Rust 負責 letterbox、批次邊界、偵測篩選與座標還原，C++ bridge 呼叫 TensorRT／
-OpenCV，CUDA kernel 合併 BGR→RGB、HWC→CHW 與正規化。Rust 路徑不載入
-PyTorch 或 Ultralytics；Python 只保留 worker 控制與原有 IPC。
+`src/yolo_worker.py` supports Rust GPU inference as a production backend. It uses the existing camera shared-memory ring, latest-frame scheduling, per-model batching, per-camera reply queues, startup lock, catalogue permissions and SHA-256 verification of artefacts and manifests.
 
-## 啟用與切換
+Each shared worker owns one engine per loaded model. Cameras assigned to it share that instance. Rust handles letterboxing, batch limits, detection filtering and coordinate restoration. A C++ bridge calls TensorRT and OpenCV. A CUDA kernel combines BGR-to-RGB conversion, HWC-to-CHW conversion and normalisation. The Rust path uses Python for worker control and existing IPC, without loading PyTorch or Ultralytics.
 
-| `YOLO_WORKER_BACKEND` | 行為 |
+## Backend selection
+
+| `YOLO_WORKER_BACKEND` | Behaviour |
 | --- | --- |
-| `auto`（預設） | GPU wheel 可用且已驗證的 CUDA engine 符合介面時選 Rust；其他模型走 Python |
-| `rust` | 要求 Rust GPU wheel 與符合介面的 CUDA engine，不接受靜默切換 |
-| `python` | 使用原本的 Ultralytics 推論路徑 |
+| `auto` (default) | Selects Rust when a GPU wheel is available and the verified CUDA engine has a supported interface. Uses Python for other models. |
+| `rust` | Requires the Rust GPU wheel and a compatible CUDA engine. Fails if either is unavailable. |
+| `python` | Uses the existing Ultralytics inference path. |
 
-`auto` 只在 wheel 未安裝、CPU-only wheel、非 CUDA engine 或明確不支援的
-模型介面時，於模型初始化選 Python。損壞的 wheel、ABI／runtime 版本錯誤及
-推論失敗會回報錯誤，沒有逐格切換後端。啟動與載入模型的 log 會顯示後端。
+`auto` selects Python at model initialisation if the wheel is absent or CPU-only, the model is not a CUDA engine, or the engine interface is explicitly unsupported. A broken wheel, an ABI or runtime mismatch, or an inference failure raises an error. Backend selection stays fixed for the model. Startup and model-loading logs identify the chosen backend.
 
-32 路部署可以使用既有 worker pool 分組，例如：
+A 32-camera deployment can reuse the existing worker pool groups.
 
 ```dotenv
 YOLO_WORKER_BACKEND=rust
@@ -32,49 +27,36 @@ YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL=yolo26n=8,yolo26s=7,yolo26m=6,yolo26l=5,
 YOLO_WORKER_ARTIFACT_MANIFEST=/app/config/stream-engines.json
 ```
 
-使用已發布的 model catalog 與真實的 engine manifest 路徑。Rust 不會從
-`models/int8_engine` 任意挑檔；catalog 原始權重及 manifest 衍生 engine 都要
-先通過既有驗證。設定變更後需重啟 worker。純 `.pt`／ONNX 模型在 `auto` 走
-Python，`rust` 則拒絕；不會自動匯出或重新量化。
+Use the published model catalogue and the actual engine manifest path. The catalogue's source weights and the derived engine in the manifest must pass verification. The worker does not select arbitrary files from `models/int8_engine`. Restart workers after changing the settings. Plain `.pt` and ONNX models use Python in `auto` mode and are rejected in `rust` mode. The worker does not export or requantise a model automatically.
 
-初版支援 NCHW、FP32 **I/O**、NMS-free `[batch, boxes, 6]` 的 detection engine；
-內部可以是目前的混合 INT8／FP16 計算。FP16 I/O、多輸出與需額外 NMS 的模型
-屬明確不支援介面。engine 的 batch 上限會限制每次呼叫，較大的 worker batch
-會拆批，回傳順序與數量仍須對應原始請求。
+The interface supports NCHW detection engines with FP32 **input and output** and NMS-free `[batch, boxes, 6]` output. Internal computation may use mixed INT8/FP16 precision. FP16 I/O, multiple outputs and models requiring additional NMS are unsupported. The engine's batch limit applies to each call. A larger worker batch is split while retaining the result count and original request order.
 
-目前 INT8 precision 使用 `rect=False`，固定方形輸入；Rust 套用同一個設定。
-其他既有設定仍可使用矩形模式。confidence=0.25、max_det=300 與 worker 預設一致。
+INT8 uses `rect=False` for fixed square input in both backends. Other settings can use rectangular inputs. The worker defaults are confidence 0.25 and a maximum of 300 detections.
 
-## TensorRT 版本與建置
+## TensorRT versions and build
 
-**Rust wheel 的 TensorRT headers、執行時的 runtime，以及 `.engine` 必須相容。**
-初始化會驗證 headers／runtime API 版本，反序列化錯誤包含 TensorRT 診斷。
+**The TensorRT headers used to build the Rust wheel, the installed runtime and the `.engine` must be compatible.** Initialisation checks header and runtime API versions. Deserialisation errors include TensorRT diagnostics.
 
-以下量測使用相容的 TensorRT **11.1.0.106** SDK、runtime 與 engine。部署時
-選用可載入目標 engine 的 runtime，再以相容的 SDK 建置 Rust wheel。
+The measurements below used a compatible TensorRT **11.1.0.106** SDK, runtime and engine. For deployment, select a runtime that can load the target engine and build the wheel with a matching SDK.
 
-根目錄 Dockerfile 會建置及安裝 GPU wheel，其 SDK 版本取自
-`deploy/python315/bootstrap.py`，目前為 **11.4.0.106**。Docker 部署也需要
-該版本可載入的已驗證 engine；不能直接把本機 11.1 engine 當成相容檔案。
+The root Dockerfile builds and installs the GPU wheel with the SDK version specified in `deploy/python315/bootstrap.py`, currently **11.4.0.106**. Docker deployments need a verified engine that this version can load. Verify compatibility before using a local 11.1 engine.
 
-只驗證 Docker wheel 建置，不啟動串流：
+To build just the Docker wheel stage without starting any streams, run the following command.
 
 ```bash
 docker build --target rust-inference-wheel -t chd-native-inference-wheel .
 ```
 
-獨立 Rust 程式直接引用此 crate 的 `core` 與 `engine`，並按需啟用 `tensorrt`。既有 Python wheel 由 `bindings/python/inference` 建置，繼續提供 `construction_inference` 模組。完整攝影機入口見 [native/pipeline](../pipeline/README.md)。
+Standalone Rust applications use the crate's `core` and `engine` modules directly and can enable the `tensorrt` feature. The Python wheel is built from `bindings/python/inference` and exposes `construction_inference`. [Standalone camera pipeline](../pipeline/README.md)
 
-主機建置 Python wheel 需要 Rust 1.93.1、Python 3.15、C++17 compiler、matching TensorRT
-headers／libraries、完整 CUDA toolkit headers、CUDA runtime／driver／NVRTC，
-以及 OpenCV core／imgproc 的 headers 與共享函式庫。設定路徑後：
+To build the Python wheel on the host, use Rust 1.93.1, Python 3.15, a C++17 compiler, matching TensorRT headers and libraries, full CUDA toolkit headers, the CUDA runtime, driver and NVRTC, and the OpenCV core/imgproc headers and shared libraries. Set the paths for your installation.
 
 ```bash
 export TRT_INCLUDE=/path/to/TensorRT-11.1/include
 export TRT_LIB=/path/to/TensorRT-11.1/lib
 export CUDA_INCLUDE=/path/to/cuda/include
 export CUDA_LIB=/path/to/cuda/lib
-export OPENCV_ROOT=/  # 系統安裝；隔離安裝可填其 prefix
+export OPENCV_ROOT=/  # System installation. For an isolated installation, use its prefix.
 export LD_LIBRARY_PATH="$TRT_LIB:$CUDA_LIB:$OPENCV_ROOT/usr/lib/x86_64-linux-gnu"
 
 uvx --python 3.15 --from maturin==1.16.0 maturin build \
@@ -84,45 +66,25 @@ uv pip install --python /path/to/python3.15 --reinstall \
   outputs/inference-wheels/*.whl
 ```
 
-`--auditwheel skip` 保留系統共享函式庫依賴，避免把主機 NVIDIA driver 打包到
-wheel；產物是平台 wheel。OpenCV runtime 必須與建置時的 SONAME 相容。
-Docker builder／runtime 使用同一 Debian 發行版及 OpenCV 套件。
+`--auditwheel skip` produces a platform wheel linked to the system libraries and avoids bundling the host's NVIDIA driver. The OpenCV runtime must match the SONAME used at build time. The Docker builder and runtime use the same Debian release and OpenCV packages.
 
-pip 安裝的 CUDA／TensorRT library 會從 Python site-packages 預載。獨立安裝
-可設定 `YOLO_WORKER_NATIVE_LIBRARY_DIRS=/path/to/cuda/lib:/path/to/TensorRT/lib`，
-指定順序優先。OpenCV 及其他自訂共享函式庫仍須在系統 loader 搜尋路徑。
-只有 Python bindings 改版不足以切換已載入的 runtime，必須重啟程序。
+CUDA and TensorRT libraries installed as Python packages are preloaded from site-packages. For a separate installation, set `YOLO_WORKER_NATIVE_LIBRARY_DIRS=/path/to/cuda/lib:/path/to/TensorRT/lib` to search those directories first, in order. OpenCV and other custom shared libraries must remain on the system loader's search path. Restart the process after changing a loaded runtime. Updating the Python bindings alone does not reload it.
 
-沒有 `--features tensorrt` 的建置是供無 GPU CI 使用的 CPU-only wheel；它能
-驗證 ABI 與純 Rust 演算法，不能進行 CUDA 推論。
+Building without `--features tensorrt` creates a CPU-only wheel for CI without a GPU. It can verify the ABI and pure Rust algorithms. CUDA inference requires the GPU wheel.
 
-## 多鏡頭資源及生命週期
+## Resources and lifetime across cameras
 
-TensorRT context 使用 user-managed activation memory，按已使用的實際 shape
-配置並保留高水位容量。同步推論完成後才能換 buffer；成長時先釋放舊 storage，
-避免舊／新 activation 暫時並存。配置失敗會使該批回報錯誤，shape cache 先失效，
-不會沿用已失效的裝置指標。
+The TensorRT context uses caller-managed activation memory. It allocates for the actual shapes used and retains the largest capacity reached. It changes buffers after synchronous inference completes and releases old storage before growing, so both reservations do not coexist. If allocation fails, the batch returns an error and invalidates the shape cache before an obsolete device pointer can be reused.
 
-worker 的共享影格使用 `BUFFER_API_VERSION=1`：Python 傳入唯讀、連續的
-uint8 HWC buffer view，Rust 在持有 GIL 時直接讀取並完成縮放／補邊，
-只讓 **Rust 自有的縮放後像素**跨越 GIL 邊界，再釋放 GIL 執行 CUDA。
-這省去原始整張影格的 `tobytes()` 快照；縮放、補邊與 host→device 傳輸仍存在。
-一般 NumPy array、非連續輸入或舊版 wheel 繼續使用 immutable bytes 快照。
+The shared frame interface uses `BUFFER_API_VERSION=1`. Python passes a read-only contiguous uint8 HWC buffer view. Rust reads it while holding the GIL, resizes and pads the frame, then releases the GIL for CUDA. Only **resized pixels owned by Rust** cross the GIL boundary. This removes the full-frame `tobytes()` snapshot while retaining resizing, padding and host-to-device transfer. Ordinary NumPy arrays, non-contiguous inputs and older wheels continue to use immutable byte snapshots.
 
-producer 的 slot lease 保留到 worker 回覆。逾時、取消或不確定是否完成的
-提交會永久停用原 ring，後續影格配置新 ring；等待 slot 的 writer 醒來時也會
-重新驗證 ring。寬限期到達後只回收已停用的 segment，不會重新寫入其 slot。
-已開啟映射的 worker 可繼續讀取；尚未開啟且已被 unlink 的過期請求會回報錯誤。
+The producer holds the slot lease until the worker replies. A timeout, cancellation or uncertain submission permanently retires the ring. Later frames use a new ring, and waiting writers revalidate the ring when they wake. After a grace period, only retired segments are reclaimed. Their slots are never rewritten. Workers that already mapped a segment can finish reading it. An expired request fails if the segment was unlinked before it opened the mapping.
 
-engine mutex 保證同一 context 的呼叫不重疊。worker 停止或 run loop
-異常時關閉 native engine，釋放 context、CUDA buffers、kernel module 與模型快取。
-關閉可重複呼叫；每個模型／worker 的狀態獨立。
+An engine mutex serialises calls on each context. Stopping a worker or exiting its run loop on error closes its native engines and releases contexts, CUDA buffers, kernel modules and the model cache. Close is idempotent. Each model and worker has independent state.
 
-32 鏡頭的資源節省應按實際 worker 數量估算。以每個 YOLO26n worker 分配
-8 鏡頭為例，是 4 個共用模型實例；記憶體數字還需區分單程序 RSS、共用頁面
-與實際主機 RAM，不能把每 worker 的 RSS 差值直接乘 32。
+Estimate resource use for 32 cameras from the actual number of workers. At eight cameras per YOLO26n worker there are four shared model instances. Distinguish per-process RSS, shared pages and physical host RAM. Multiplying one worker's RSS difference by 32 would overstate host savings.
 
-## 測試及量測
+## Tests and measurements
 
 ```bash
 export PYO3_PYTHON=/path/to/python3.15
@@ -133,37 +95,28 @@ cargo test --locked --features extension-module --lib \
 PYTHON_DOTENV_DISABLED=1 YOLO_WORKER_BACKEND=python python -m pytest \
   tests/src/native_inference_test.py tests/src/yolo_worker_test.py
 
-# 明確指定本機測試模型，才會執行 GPU／32 路 IPC 整合測試。
+# Set the local test model to run the GPU and 32-stream IPC integration tests.
 CHD_NATIVE_TEST_ENGINE=/path/to/best_yolo26n.engine \
   PYTHON_DOTENV_DISABLED=1 python -m pytest \
   tests/src/native_inference_gpu_test.py
 ```
 
-GPU 測試包含正式方形輸入的 batch 1／8、engine capacity 拆批、錯誤輸入後的
-狀態、重複關閉，以及 **32 路模擬來源、真實 shared memory／獨立 queue、3 輪
-共 96 次請求**。使用隔離的測試 catalog，仍驗證真實 engine SHA256，不讀正式
-資料庫、Redis 或攝影機。測試也確認 Rust worker 沒有載入 PyTorch，96 格全部
-使用 buffer view，完整影格快照位元組數為零。另測試取消發生在 queue 提交途中、
-停用 ring 時仍在等 slot 的 writer，以及失效 buffer 不會破壞 engine 狀態。
+The GPU tests cover production square-input batches of 1 and 8, splitting larger batches to fit the engine, recovery after invalid inputs, repeated close and **32 simulated sources using real shared memory and independent queues for three rounds and 96 requests**. The isolated test catalogue verifies the engine's SHA-256 without accessing production databases, Redis or cameras. The Rust worker ran without loading PyTorch. All 96 frames used buffer views, with zero full-frame snapshot bytes. Tests also cover cancellation during queue submission, writers still waiting for slots when a ring is retired, and engine integrity after an invalid buffer.
 
-效能量測直接呼叫 `YoloWorker._predict_batch`，包含 Python→Rust bytes 拷貝、
-PyO3 結果建構及結果轉換，使用 INT8 worker 的 `rect=False` 設定。
+The benchmark calls `YoloWorker._predict_batch` directly with the INT8 worker's `rect=False`. Timing includes the Python-to-Rust byte copy, constructing PyO3 results and converting the output.
 
-第一輪正式設定量測，含完整影格快照（RTX 4090、TensorRT 11.1、58 格、7 輪）：
+Initial measurements with production settings and full-frame snapshots used an RTX 4090, TensorRT 11.1, 58 frames and seven rounds.
 
-| 模型 | Batch | Python ms／張 | Rust ms／張 | 每輪加速比中位數 |
+| Model | Batch | Python ms/image | Rust ms/image | Median paired speed-up |
 | --- | ---: | ---: | ---: | ---: |
 | yolo26n | 1 | 1.9865 | 1.3678 | 1.45× |
 | yolo26n | 8 | 1.2970 | 0.5840 | 2.23× |
 | yolo26s | 1 | 2.1565 | 1.6421 | 1.31× |
 | yolo26s | 8 | 0.9356 | 0.6795 | 1.38× |
 
-confidence／類別完全一致，原圖座標最大誤差 0.000061 pixel。單程序 CPU 峰值
-RSS 約降低 51～53%；Rust worker 不載入 PyTorch。activation reservation 依
-模型與 batch 約降低 27～31%，不是整張 GPU 的總顯存差值。
+Confidence scores and classes matched exactly. The maximum coordinate difference in the original image was 0.000061 pixels. Peak per-process CPU RSS fell by approximately 51–53%. The Rust worker ran without loading PyTorch. The activation reservation fell by approximately 27–31%, depending on the model and batch. This measures reserved activation memory, not total GPU memory.
 
-本次對照使用 Ultralytics 8.4.183 和 PyTorch 2.15.0。加速比中位數由各輪
-Python／Rust 耗時比值計算。使用相容的 engine 與 Python 環境重跑量測。
+This comparison used Ultralytics 8.4.183 and PyTorch 2.15.0. Each speed-up is the median of the paired Python/Rust elapsed-time ratios. Use a compatible engine and Python environment to repeat it.
 
 ```bash
 python experiments/rust_trt_benchmark/benchmark.py --prepare
@@ -173,51 +126,35 @@ PYTHON_DOTENV_DISABLED=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   --output outputs/native_worker_benchmark.json
 ```
 
-輸入 manifest 使用本機測試影片與圖片。先比對全部輸出，再執行交錯 7 輪；暖機、讀檔與
-JSON 控制訊息不計時。CPU affinity、engine／source SHA256、各輪耗時、
-GPU 狀態、單程序 peak RSS 與 activation bytes 都保存在結果。
+The input manifest uses local video and test images. The benchmark compares all outputs before running seven alternating rounds. Reading files, warm-up and JSON control messages are outside the timed interval. Results include CPU affinity, engine and source SHA-256 hashes, per-round timings, GPU state, per-process peak RSS and activation bytes.
 
-## 共享影格快照減量
+## Reducing shared-frame snapshots
 
-2026-11-17 使用同一個 YOLO26n engine、RTX 4090、固定 640 方形輸入，
-對交錯執行的快照／buffer 路徑量測 7 輪。8 格測試影片影像預先放大為
-720p／1080p 並寫入共享記憶體；放大、讀檔及初次映射不計時。
+On 17 November 2026 the snapshot and buffer paths were compared in seven alternating rounds using the same YOLO26n engine on an RTX 4090 with fixed 640-square input. Eight frames from the test video were enlarged to 720p and 1080p and placed in shared memory before timing. Resizing the source, reading it from disk and creating the initial mapping were excluded.
 
-| 輸入 | Batch | 快照 ms／張 | Buffer ms／張 | 每輪加速比中位數 |
+| Input | Batch | Snapshot ms/image | Buffer ms/image | Median paired speed-up |
 | --- | ---: | ---: | ---: | ---: |
 | 720p | 1 | 1.7210 | 1.5611 | 1.10× |
 | 720p | 8 | 1.1146 | 0.7172 | 1.56× |
 | 1080p | 1 | 2.3247 | 1.8444 | 1.27× |
 | 1080p | 8 | 1.8849 | 1.0266 | 1.84× |
 
-每個 case 的偵測輸出完全相同。1080p 每格省去 6,220,800 bytes 的完整影格快照；
-batch 8 約少 47.46 MiB 的快照資料。這是相對於先前 Rust 快照路徑的改善，
-不能把這裡的倍數直接乘上第一輪 Python／Rust 比值。
+Detection outputs were identical in each case. A 1080p frame avoided a full-frame snapshot of 6,220,800 bytes, or about 47.46 MiB for batch 8. These ratios compare two Rust paths. They cannot be multiplied directly by the earlier Python/Rust ratios.
 
-以下命令輸出各輪耗時、複製計數、來源 hash 及 GPU 狀態。
+This command records round timings, copy counts, source hashes and GPU state.
 
 ```bash
 python -m scripts.benchmark_frame_buffers --rounds 7 --core 4 \
   --output outputs/frame_buffer_benchmark.json
 ```
 
-## 幾何套件按需載入
+## Loading geometry libraries on demand
 
-`DangerDetector` 的 bbox 正規化移至不含幾何相依的 `src/bounding_boxes.py`；
-原本 `src.geometry.normalise_bbox` 的匯入介面仍保留。Shapely、SciPy、sklearn
-改為 lazy import，HDBSCAN 直到需要檢查區域時才建立；少於三個交通錐、
-沒有電線桿，以及空的多邊形座標轉換都提前返回。
+`DangerDetector` now uses bounding-box normalisation from `src/bounding_boxes.py`, which has no geometry dependencies. The `src.geometry.normalise_bbox` import remains available. Shapely, SciPy and sklearn load lazily, and HDBSCAN is created only for zone checks. Fewer than three cones, absent utility poles or empty polygon coordinate conversions return early.
 
-PPE／人員與機具距離規則不會觸發這些套件。第一次實際使用幾何功能時仍會
-載入原本套件並執行既有演算法；因此記憶體效益取決於各鏡頭啟用的規則與影像內容。
-32 組功能開關、共 832 組輸入的警報與多邊形輸出，與修改前完全一致。
+PPE and person-to-machinery proximity rules do not load these packages. The first actual geometry operation loads the same packages and uses the existing algorithm. Memory savings depend on the enabled rules and the scene. Alerts and polygon outputs matched the earlier implementation across 32 feature-flag combinations and 832 input cases.
 
-測試讓新程序匯入 `src.stream_processor`，並初始化 32 個 Rust PPE／距離 detector，
-共執行五輪對照。
-本機啟動耗時中位數由 0.986 秒降至 0.454 秒；PSS 中位數由 186.23 MiB
-降至 97.46 MiB，約少 88.77 MiB。
-每輪是單一新程序，沒有啟動攝影機；PSS 受系統共用頁面影響，不能直接乘 32
-當成實際部署的 RAM 節省。重現時提供修改前的 `src` 目錄快照：
+Over five trials, a fresh process imported `src.stream_processor` and initialised 32 Rust PPE/proximity detectors. Local median startup time fell from 0.986 s to 0.454 s and median PSS from 186.23 MiB to 97.46 MiB, a reduction of approximately 88.77 MiB. Each trial used one fresh process without starting any cameras. PSS depends on shared system pages. Multiplying by 32 would not give a deployment RAM figure. Provide a snapshot of the original `src` directory to reproduce the comparison.
 
 ```bash
 mkdir -p outputs
@@ -225,90 +162,55 @@ python -m scripts.benchmark_geometry_loading --baseline /path/to/before \
   --output outputs/geometry_loading_benchmark.json
 ```
 
-## 後續 buffer 重用與 resize 評估
+## Buffer reuse and resizing
 
-Rust engine 再加入 host 像素與偵測輸出 workspace 的高水位重用。letterbox
-直接縮放到既有輸出 buffer 的 ROI，填入四周 padding，不再配置中間 resized Mat。
-CUDA 傳輸／activation buffer 延續原本的高水位管理。
+The Rust engine retains reusable host pixel and detection workspaces at their largest capacity. Letterboxing resizes into a region of the existing output buffer and fills its padding, eliminating the intermediate resized Mat. CUDA transfer and activation buffers retain their existing high-water allocation policy.
 
-`workspace_growths` 記錄兩個主要 host buffer 的容量成長次數；固定 batch／shape
-暖機後不再增加。`workspace_bytes` 是可重用 host workspace 容量，並非 engine
-總記憶體。每個尚在使用的 prepared batch 都持有自己的像素，不跨 GIL 借用
-NumPy 記憶體；多個呼叫交錯時可配置獨立 workspace，context 仍由 mutex 保護。
+`workspace_growths` counts capacity increases in the two main host buffers. It stops growing once a fixed batch and shape have warmed up. `workspace_bytes` reports reusable host workspace capacity, which is only part of total engine memory. Each live prepared batch owns its pixels. It holds no borrowed NumPy memory across the GIL boundary. Interleaved calls can allocate separate workspaces while the mutex protects the context.
 
-1080p YOLO26n、固定 640 方形輸入的 7 輪對照，batch 1 約由 1.8662 降至
-1.7955 ms／張，batch 8 約由 1.0315 降至 0.9321 ms／張。重跑指令見
-[後處理與共用影格量測](../../bindings/python/postprocess/README.md)。
+In seven rounds of 1080p YOLO26n with fixed 640-square inputs, batch 1 fell from approximately 1.8662 to 1.7955 ms/image, and batch 8 from 1.0315 to 0.9321 ms/image. [Postprocessing and shared-frame benchmark commands](../../bindings/python/postprocess/README.md)
 
-另以獨立 CUDA bilinear kernel 比較 CPU resize／padding 後上傳，與原圖先上傳
-再由 GPU resize。兩者皆重用 buffer、包含 pageable H2D、輸出留在 GPU，
-尚未接入正式 engine。720p 候選約 0.281 ms，CPU 約 0.330 ms，但有 1 階像素
-差異；1080p 候選約 0.595 ms，CPU 約 0.551 ms。
+A separate CUDA bilinear kernel compared uploading CPU-resized/padded frames with uploading the original frame and resizing on the GPU. Both reused buffers, included pageable host-to-device transfer and kept output on the GPU. The benchmark runs independently of the production engine. At 720p, the GPU candidate took approximately 0.281 ms against 0.330 ms on CPU, with a one-level pixel difference. At 1080p they took about 0.595 ms and 0.551 ms respectively.
 
-目前 worker 使用 CPU resize。以下命令可重跑候選的插值與延遲比較。
+The worker uses CPU resizing. Run the command below to reproduce the interpolation and latency comparison.
 
 ```bash
 mkdir -p outputs
 python -m scripts.benchmark_resize_candidates --output outputs/resize_candidate_benchmark.json
 ```
 
-這仍是偵測階段量測，不含攝影機、decode、worker IPC／排隊、追蹤、繪圖、
-編碼、儲存與通知。32 路 IPC 功能測試不代表已驗證 32 支真實 RTSP 的全流程
-容量。GPU 原有負載保留，百分比及延遲應依實際部署重新評估。
+These results cover detection. Camera capture, decoding, worker IPC and queueing, tracking, drawing, encoding, storage and notifications are outside the timings. The 32-stream IPC test establishes functionality but does not measure end-to-end capacity for 32 real RTSP cameras. Measurements included existing GPU load. Recheck latency and utilisation for the actual deployment.
 
-## 跨程序 GPU 資源與非同步推論
+## Cross-process GPU resources and asynchronous inference
 
-這一階段先把配額和生命週期接入現有 worker，另提供獨立的 GPU 影格實驗。
-設定範例在 [`.env.example`](../../.env.example)，所有權說明見
-[`src/settings/README.md`](../../src/settings/README.md)。
+The existing worker supports resource quotas and lease lifetimes. GPU frame handling is available as a separate experiment. See the [configuration example](../../.env.example) and [settings ownership guide](../../src/settings/README.md).
 
-| 功能 | 實作與啟用方式 | 邊界 |
+| Feature | Implementation and setting | Scope |
 | --- | --- | --- |
-| NVENC 共用名額 | Rust `ResourceLease`；既有 publisher／restreamer 自動使用 | Python fallback 使用相同協定；同一實體 GPU 的參與者須共用目錄、UID、namespace 及上限 |
-| 推論工作上限 | `GPU_RESOURCE_INFERENCE_SLOTS`，0 為停用 | Rust model 每次呼叫取得一份 lease，直到所有 CUDA 工作／結果收取完成才釋放 |
-| 模型記憶體預算 | `GPU_RESOURCE_MEMORY_LIMIT_MB`，0 為停用 | 每個模型另宣告 `YOLO_WORKER_GPU_MEMORY_RESERVATION_MB`，載入前保留、關閉 engine 後釋放 |
-| 非同步推論 | `YOLO_WORKER_NATIVE_ASYNC=true`，預設 false | pinned pixels/output、兩份 device I/O buffer、upload/compute stream、event、`enqueueV3` |
-| GPU 影格與編碼 | wheel 的 `gpu-media` feature，加獨立 `ExperimentalGpuMedia` | 尚未通過舊路徑色彩／偵測一致性門檻，沒有接入 `StreamCapture`／正式 publisher |
+| Shared NVENC slots | Existing publishers and restreamers automatically use the Rust `ResourceLease`. | The Python fallback uses the same protocol. Participants on one physical GPU must share the directory, UID, namespace and limit. |
+| Inference concurrency | `GPU_RESOURCE_INFERENCE_SLOTS`, disabled at 0. | Each Rust model call holds a lease until all CUDA work completes and all results have been collected. |
+| Model memory budget | `GPU_RESOURCE_MEMORY_LIMIT_MB`, disabled at 0. | Each model declares `YOLO_WORKER_GPU_MEMORY_RESERVATION_MB`. It reserves memory before loading and releases it after closing the engine. |
+| Asynchronous inference | `YOLO_WORKER_NATIVE_ASYNC=true`, off by default. | Uses pinned pixels and outputs, two sets of device I/O buffers, upload and compute streams, events and `enqueueV3`. |
+| GPU frames and encoding | Wheel feature `gpu-media` with standalone `ExperimentalGpuMedia`. | Colour/detection parity with the existing path has yet to pass. This experiment runs separately from `StreamCapture` and the production publisher. |
 
-GPU 配額以 Rust file-lock lease 協調，不需要常駐服務。32 個程序混用 Rust／Python
-取得 6 個名額的測試，確認只有 6 個成功，程序崩潰後可補回名額。
-FFmpeg 子程序透過 `pass_fds` 持有同一份 lease，避免控制程序退出後，尚在執行的
-encoder 被漏算；fork 子程序會關閉非自己取得的描述符。多份記憶體單位的取得
-失敗會整批回滾，不佔住部分預算。
+Rust file-lock leases coordinate GPU quotas without a persistent service. A mixed Rust/Python test with 32 processes requesting six slots admitted exactly six and reclaimed slots after a crash. FFmpeg subprocesses inherit the same lease via `pass_fds` so that an encoder still running after its controller exits counts towards the limit. Forked children close descriptors they did not acquire. Failure to acquire all requested memory units rolls back the entire reservation.
 
-Compose 新增 `gpu-resource-locks` named volume，攝影機程序及同一專案的 replica
-共用 `/app/outputs/gpu-resources`。主機程序／其他 Compose project 必須另外指向
-同一實際目錄；各自容器的 `/tmp` 不能形成全域配額。`GPU_RESOURCE_DEVICE_ID`
-須對應實體 GPU，不能因 `CUDA_VISIBLE_DEVICES` 的邏輯編號而分成不同 namespace。
-上限不一致且舊配額仍在使用時拒絕取得；請先結束參與者再修改，勿刪除使用中的
-lock 檔。NVENC 上限沿用 `MEDIA_NVENC_MAX_SESSIONS`。
+Compose supplies the `gpu-resource-locks` named volume. Camera processes and replicas in the same project share `/app/outputs/gpu-resources`. Host processes and other Compose projects must point to the same physical directory. Separate container `/tmp` directories create separate quotas. `GPU_RESOURCE_DEVICE_ID` must identify the physical GPU independently of `CUDA_VISIBLE_DEVICES` logical numbering. An incompatible quota request is rejected while the previous quota is in use. Stop participants before changing the quota and keep active lock files in place. NVENC continues to use `MEDIA_NVENC_MAX_SESSIONS`.
 
-推論／記憶體上限啟用後要求 `YOLO_WORKER_BACKEND=rust`，避免自動退回 Python
-而繞過限制。記憶體每份保留向上取整至 64 MiB、總預算向下取整；這是使用者宣告的
-容量預算，須涵蓋 engine、activation 和最大 shape/batch 的 buffer，並留系統餘裕。
-它不會攔截其他 CUDA 程序，也未計入 API、NVDEC、GPU 色彩 LUT／影格或 pinned RAM，
-不能保證不會 OOM。推論上限也沒有優先權／跨程序公平排程保證。
+Enabling inference or memory limits requires `YOLO_WORKER_BACKEND=rust` to prevent automatic fallback from bypassing enforcement. Each memory reservation rounds up to 64 MiB and the total budget rounds down. Include the engine, activations and maximum shape/batch buffers in the declared reservation and leave headroom. The budget excludes other CUDA processes, API workloads, NVDEC, GPU colour LUTs and frames, and pinned RAM. Out-of-memory failures remain possible. Inference limits give no priority or cross-process fairness guarantees.
 
-可選的非同步 worker 保留一個 TensorRT execution context，compute stream 依序
-執行，另一個 upload stream 讓後一批傳輸有機會與前一批計算重疊。兩個 ticket
-未 collect 前不覆寫 pinned buffer；shape 變更前排空。close 先等待 GPU，再釋放
-context 和 storage。它不會同時執行同一 context 的兩次推論。
+The optional asynchronous worker uses one TensorRT execution context. One compute stream executes in order while a separate upload stream can overlap the next batch transfer with the current computation. Two outstanding tickets each retain their pinned buffers until collection. Shape changes drain pending work. Close waits for the GPU before releasing the context and storage. Calls never use the same context concurrently.
 
-`YOLO_WORKER_NATIVE_MICRO_BATCH_SIZE=0` 使用 engine 容量；例如 worker batch 8、
-micro batch 4 才會在同一次請求中送出兩批。切小 batch 可能降低 TensorRT 效率，
-單個 batch 只有一次 submit/collect 也不會憑空產生兩批重疊。
+`YOLO_WORKER_NATIVE_MICRO_BATCH_SIZE=0` uses the engine capacity. With a worker batch of 8 and microbatch of 4, one request submits two batches. Smaller batches can reduce TensorRT efficiency. A single submit/collect pair has no second batch with which to overlap.
 
-本機 RTX 4090／YOLO26n INT8、1080p leased shared-memory 影格，每次 16 格，
-固定 640 方形輸入，依相同 microbatch 比較同步與非同步。交錯 5 輪、每輪每模式
-50 次請求，暖機／讀檔不計時，既有 GPU 負載保留。量測範圍為推論請求。
+The synchronous and asynchronous tests used an RTX 4090 and YOLO26n INT8 with leased 1080p shared-memory frames, 16 frames per request and fixed 640-square input. Each microbatch size was compared against the same synchronous size in five alternating rounds of 50 requests per mode. Timings cover inference requests, exclude warm-up and file I/O and include the existing GPU load.
 
-| Microbatch | 同步 ms／張 | 非同步 ms／張 | 配對加速比中位數 | 非同步 pinned RAM |
+| Microbatch | Synchronous ms/image | Asynchronous ms/image | Median paired speed-up | Asynchronous pinned RAM |
 | --- | ---: | ---: | ---: | ---: |
 | 1 | 1.8152 | 1.7263 | 1.040× | 2.36 MiB |
 | 8 | 0.9475 | 0.9976 | 0.952× | 18.86 MiB |
 
-全部偵測輸出逐值相同。非同步預設關閉，現階段不建議為 32 路全面啟用；
-應依 batch、排隊延遲、CPU、VRAM／pinned RAM 與部署負載重新量測。
+All detection values matched. Asynchronous mode defaults to off. Before enabling it for 32 streams, measure with the actual batch size, queuing latency, CPU, VRAM, pinned RAM and deployment load.
 
 ```bash
 mkdir -p outputs
@@ -316,13 +218,13 @@ python -m scripts.benchmark_async_inference --rounds 5 --repeats 50 \
   --output outputs/async_inference_benchmark.json
 ```
 
-## GPU 影格、標註與 NVENC 實驗
+## GPU frames, annotations and the NVENC experiment
 
 ```mermaid
 flowchart LR
     A[PyAV / FFmpeg NVDEC] --> B[CUDA NV12 planes]
     B --> C[Rust GPU frame ownership<br/>D2D import + stream barrier]
-    C --> D[GPU color / integer resize / normalize]
+    C --> D[GPU colour conversion / integer rescaling / normalisation]
     D --> E[TensorRT enqueueV3]
     E --> F[Small detection results to CPU]
     F --> G[Small BGRA glyph uploads]
@@ -333,30 +235,15 @@ flowchart LR
     J --> K[Compressed H264 bytes to host]
 ```
 
-Rust 的 `GpuFrame` 只接受型別化 frame，驗證 DLPack dtype／shape／stride／CUDA
-device，並以 D2D 複製建立自己擁有的影格。尚未 collect 的推論與 NVENC 保留 image
-reference；呼叫者提早 close 仍安全，但持有中禁止原地修改，需先 copy。
-輸出經 libavcodec 的 CUDA `AVFrame` 交給 NVENC，沒有 CPU rawvideo pipe；
-CPU 只接收偵測結果／壓縮位元流，以及提供小型框線／文字 patch。
+Rust's `GpuFrame` accepts typed frames, checks the DLPack dtype, shape, stride and CUDA device, and uses a device-to-device copy to obtain ownership. Pending inference and NVENC retain an image reference. The caller can close early, but must copy the frame before changing it while a reference is held. libavcodec passes a CUDA `AVFrame` to NVENC without a CPU rawvideo pipe. The CPU receives detection results and compressed streams and uploads small box and text patches.
 
-這不是完全零複製：仍有 GPU 內部影格複製及色彩轉換。PyAV 17.1 的 CUDA plane
-DLPack 缺少 producer-stream handshake，因此匯入前需要 device-wide 同步，
-不適合直接宣稱能提升多鏡頭併行容量。色彩 LUT 約 48 MiB／profile，最多快取兩份；
-影格目前各自配置，尚未完成 GPU pool。前處理只接受像素可對齊的等比整數縮小，
-任意比例／放大會拒絕，不會悄悄使用不同插值規則。
+The GPU still copies frames and converts colours. PyAV 17.1's CUDA plane DLPack lacks a producer-stream handshake, so import requires device-wide synchronisation. Multi-camera concurrency gains are therefore unproven. A colour LUT takes about 48 MiB per profile, with up to two cached profiles. Frames are allocated individually. There is no GPU pool yet. Preprocessing only accepts pixel-aligned, aspect-preserving integer reductions. Other scales and enlargement are rejected to preserve interpolation behaviour.
 
-本機測試影片 640×352 與其 1920×1080 版本，各完成 32 格解碼、推論、框線／文字
-混色、NVENC 編碼及重新解碼。熱路徑完整影格下載 bytes=0、推論影像 H2D bytes=0；
-這些計數不含事前色彩診斷下載、glyph 上傳及壓縮位元流。GPU alpha blend 與
-CPU 整數混色逐像素一致；使用同一份實際 BGR 輸入時，CPU／device engine 推論相同。
+For both the 640×352 local test video and its 1920×1080 version, 32 frames completed decoding, inference, box/text blending, NVENC encoding and decoding again. Full-frame download bytes and inference-image H2D bytes were both zero on the hot path. These counters exclude prior colour diagnostic downloads, glyph uploads and compressed bitstreams. GPU alpha blending matched integer CPU blending pixel for pixel. With identical BGR input, CPU-fed and device-fed engine outputs matched.
 
-**既有路徑的一致性尚未通過。** 640×352 案例 GPU／原 swscale BGR 最大差 58，
-1080p 案例最大差 22，偵測結果也不同；即使用 POINT profile 仍有 2／3 階差異。
-此路徑保留為單獨的 GPU 影格實驗。以下命令會輸出兩種尺寸的驗證結果。
+**The experimental path has yet to match the existing pipeline.** Compared with the original swscale BGR output, the maximum pixel-level difference was 58 at 640×352 and 22 at 1080p, and detections differed. Even the POINT profile differed by two and three levels respectively. Keep the GPU frame path as a separate experiment. The commands below report the results for both sizes.
 
-Python 3.15 使用現有 PyAV／FFmpeg，沒有新增 PyNvVideoCodec 相依。
-建置時的 FFmpeg、CUDA、TensorRT headers／runtime 必須相容。
-編譯 feature 不會自動啟用實驗路徑：
+Python 3.15 uses the existing PyAV/FFmpeg installation without adding PyNvVideoCodec. The FFmpeg, CUDA and TensorRT headers and runtimes must be compatible. Compiling the optional feature leaves activation of this experimental path explicit.
 
 ```bash
 # Debian/Ubuntu additionally needs libavcodec-dev and libavutil-dev.
@@ -374,16 +261,11 @@ python -m scripts.validate_gpu_media --engine /path/to/compatible.engine \
   --report outputs/gpu_media_1080_results.json
 ```
 
-## 獨立 Rust 前處理 pool
+## Standalone Rust preprocessing pool
 
-純 Rust API 的 `NativeEngine::prepare_images_parallel` 可接受呼叫端共用的有界 Rayon pool。
-每張影像使用獨占的輸出 slice，仍呼叫原 `ci_letterbox`／OpenCV INTER_LINEAR；CPU 工作不攜帶 CUDA context。
-`native/pipeline` 由全部模型共用 `preprocess_workers` 個執行緒，準備完才提交 engine。
-現有 Python worker 預設呼叫路徑保持序列，不會自動套用此 pool；batch 1 也沒有跨影像並行收益。
+The Rust API `NativeEngine::prepare_images_parallel` accepts a bounded Rayon pool shared by the caller. Every image gets an exclusive output slice. It uses the existing `ci_letterbox` implementation and OpenCV INTER_LINEAR. CPU work carries no CUDA context. All models in `native/pipeline` share `preprocess_workers` threads and submit to the engine after preparation. The Python worker's default path stays sequential. A batch of one provides no opportunity for parallelism across images.
 
-使用相容的 CUDA／TensorRT runtime，並將測試 engine 放在
-`models/int8_engine/best_yolo26n.engine`。以下測試逐位元組比對 Full HD、混合尺寸、
-矩形模式及不同執行緒數的前處理結果。
+Use a compatible CUDA/TensorRT runtime and put the test engine at `models/int8_engine/best_yolo26n.engine`. The following test compares preprocessing byte for byte across Full HD and mixed-size frames, rectangular mode and different thread counts.
 
 ```bash
 cargo test --locked --features tensorrt --lib \

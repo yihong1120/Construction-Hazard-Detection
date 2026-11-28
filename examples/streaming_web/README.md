@@ -1,4 +1,4 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
 # Streaming Web Backend
 

@@ -1,4 +1,8 @@
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
 # Keycloak 部署
+
+請將範例中的網域、位址與識別碼替換成自己部署環境的值。
 
 此 Compose 設定使用主機既有的 PostgreSQL instance，但 Keycloak 必須使用獨立的
 `keycloak` database；絕不可使用 Visionnaire 的 `construction_hazard_detection`
@@ -54,7 +58,7 @@ Web BFF 必須使用一般 OIDC refresh token，不得請求 `offline_access`。
 Provider 對 hCaptcha 的 `siteverify` 會帶入 server-side secret、一次性 challenge token
 與預期 site key；外部服務異常、token 無效或 site key 不相符時會 fail closed，絕不
 略過真人驗證。網域限制必須在 hCaptcha Dashboard 的 sitekey **Domain Allowlist** 設定
-`mooo.com`（會涵蓋 `changdar-server.mooo.com`）；不可依賴 `siteverify` 回傳的
+`example.org`（會涵蓋 `app.example.org`）；不可依賴 `siteverify` 回傳的
 `hostname`，因為該值是瀏覽器衍生的統計資訊。
 
 既有 Visionnaire 使用者可能沒有 email、名字或姓氏。為使 OIDC 切換後仍可直接登入，
@@ -95,11 +99,11 @@ PKCE-bound one-use proof，最終仍回到標準 Authorization Code + PKCE。完
 交易與前端規格在
 [原生社群憑證交換規格](../../docs/zh/native_social_exchange.md)。
 
-## Flutter Native client
+## Flutter 原生用戶端
 
 啟動程序也會建立 `visionnaire-mobile` public OIDC client。它只允許 Authorization
 Code + PKCE（S256），停用 implicit、password/direct grant 與 client secret，callback
-固定為 `com.changdar.visionnaire:/oauthredirect`；access token 會有
+固定為 `com.example.visionnaire:/oauthredirect`；access token 會有
 `visionnaire-api` audience。Flutter app 不得持有 client secret 或 hCaptcha secret。
 
 ## 登入政策的單一來源

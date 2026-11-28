@@ -1,8 +1,8 @@
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
 # Nginx：BFF、Native OAuth 與 Media Session
 
-本機目前實際載入 `/etc/nginx/sites-enabled/default`；它不是
-`sites-available/default` 的 symlink。以下設定都必須放在
-`changdar-server.mooo.com` 的 HTTPS `server {}` 內。
+請編輯 Nginx 實際載入的設定檔，將以下設定加入 HTTPS `server {}` 區塊。範例使用 `app.example.org` 和專案目錄 `/srv/Construction-Hazard-Detection`，請替換成自己的網域和路徑。
 
 ## 1. 啟動並加入 Web BFF
 
@@ -19,7 +19,7 @@ uvicorn examples.db_management.app:app \
 在 HTTPS `server {}` 內加入：
 
 ```nginx
-include /home/changdar/Documents/Construction-Hazard-Detection/deploy/bff/nginx.bff.conf;
+include /srv/Construction-Hazard-Detection/deploy/bff/nginx.bff.conf;
 ```
 
 Web 登入/session 仍使用 `/bff/*`，Nginx 直接轉到 port `8005`。Flutter Web 的
@@ -42,7 +42,7 @@ location ^~ /hazard/media/
 在相同位置改成：
 
 ```nginx
-include /home/changdar/Documents/Construction-Hazard-Detection/examples/streaming_web/nginx.hazard-media.conf;
+include /srv/Construction-Hazard-Detection/examples/streaming_web/nginx.hazard-media.conf;
 ```
 
 同時刪除 server block 外的舊 media auth cache/query-token 設定：
@@ -67,9 +67,9 @@ sudo systemctl status nginx --no-pager
 未登入 smoke test：
 
 ```bash
-curl -i https://changdar-server.mooo.com/bff/auth/session
-curl -i https://changdar-server.mooo.com/hazard/api/db_management/me
-curl -i https://changdar-server.mooo.com/hazard/api/media-auth
+curl -i https://app.example.org/bff/auth/session
+curl -i https://app.example.org/hazard/api/db_management/me
+curl -i https://app.example.org/hazard/api/media-auth
 ```
 
 預期前兩個登入相關 endpoint 回 `401`；`media-auth` 因為是 Nginx `internal`

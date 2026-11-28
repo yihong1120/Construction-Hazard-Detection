@@ -1,3 +1,5 @@
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
 # Redis systemd deployment
 
 Install the managed Redis service and its restart delay:

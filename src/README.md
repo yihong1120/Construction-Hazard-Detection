@@ -1,6 +1,6 @@
-# Source Modules
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-[English](./README.md) | [繁體中文](./README-zh-tw.md)
+# Source Modules
 
 `src/` contains the production runtime used by `main.py`. The modules here
 capture frames, run YOLO inference, derive warnings, publish live media,
@@ -29,8 +29,8 @@ stream_capture.py
 - `yolo_worker.py`: multiprocessing worker and client. Frames are copied into
   POSIX shared memory; queue messages contain metadata only. Workers load YOLO
   models once and batch requests across cameras.
-- `yolo_detector.py`: detection facade used by stream processors. It can call
-  the local worker path or the optional remote detector API.
+- `yolo_detector.py`: detection interface used by stream processors to submit
+  frames to the shared YOLO worker and track detections.
 - `danger_detector.py`: converts detections into construction-safety warnings
   and controlled-area polygons.
 - `media_stream_publisher.py`: publishes clean or annotated frames to MediaMTX
@@ -55,7 +55,7 @@ stream_capture.py
 HTTP broadcast. FCM uses the OIDC-authenticated backend; other platforms use
 their own credentials. Detection and violation decisions stay in `stream_detection.py`.
 
-Install `uv sync --extra social-notifications` for optional adapters. Call them
+Install `uv sync --locked --extra social-notifications` for optional adapters. Call them
 directly or through MCP notification tools; the existing camera worker uses FCM.
 See the [LINE Messaging API guide](../docs/en/line_notify_guide_en.md).
 

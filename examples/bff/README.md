@@ -1,3 +1,5 @@
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
 # Web Backend-for-Frontend
 
 The Web BFF is a separate code module mounted by
@@ -26,6 +28,10 @@ Public routes:
 - `POST /bff/auth/logout`
 - `/bff/{allowlisted-service}/*`
 
+The main application's public login page at `https://<app-host>/login` redirects
+to `/bff/auth/oidc/login`. Keycloak then handles credentials, hCaptcha and any
+configured multi-factor authentication.
+
 The canonical service names are `chat`, `db_management`, `detection`, `fcm`,
 `files`, `streaming`, `streaming_web`, and `violations`. For example, sites are
 listed through `GET /bff/db_management/list_sites`.
@@ -33,7 +39,7 @@ listed through `GET /bff/db_management/list_sites`.
 `GET /bff/auth/session` verifies the current access token and resolves the local
 identity, profile and feature grants again. Navigation therefore reflects grants
 and revocations on page refresh, including sessions created before a permission
-change. Login-time Redis metadata is not the authorization source. Session
+change. Login-time Redis metadata is not the authorisation source. Session
 summary reads never rewrite encrypted tokens held by a concurrent refresh.
 
 For violation list and detail responses, the BFF rewrites `image_url` and
@@ -43,12 +49,40 @@ internal root paths to the browser.
 
 Unsafe requests require an allowed `Origin` and `X-CSRF-Token`.
 
-For OIDC sessions, `POST /bff/auth/logout` returns a one-use
+## Keycloak and OpenID Connect single sign-on
+
+Web clients start the authorisation-code flow by navigating to a local return
+path, for example `GET /bff/auth/oidc/login?return_to=/violations`. The BFF
+creates a single-use `state` and an S256 PKCE challenge, and encrypts the
+Keycloak access and refresh tokens in Redis. The browser receives an opaque
+HttpOnly session cookie. The callback checks the access token's signature,
+issuer and `OIDC_AUDIENCE`, then maps `sub` to the local
+`user_identities(provider=keycloak)` record. The local tenant, role, group,
+site and feature grants determine access.
+
+The BFF requests a regular refresh token and omits `offline_access`. Refreshing
+extends the same online SSO session shared by Visionnaire and the Keycloak
+Account Console. When the idle or maximum SSO lifetime expires, both require
+the user to sign in again.
+
+Use a dedicated Keycloak audience such as `visionnaire-api` for
+`OIDC_AUDIENCE`. Open WebUI and Visionnaire use separate clients. Open WebUI
+tokens must exclude the Visionnaire audience. Branded Google and Apple
+buttons link to `/bff/auth/oidc/login?return_to=/&idp_hint=google` or use
+`idp_hint=apple`. The BFF forwards only allowlisted provider hints. Third-party
+tokens stay with Keycloak. The account screen links password changes to
+`/bff/auth/account`. Local password login, direct social login and the local
+refresh endpoint have been retired. Keycloak's login theme and server-side
+provider handle hCaptcha.
+
+For OIDC sessions, the CSRF-protected `POST /bff/auth/logout` returns a one-use
 `global_logout_url`. Flutter Web must navigate the top-level browser to that
 URL after clearing its UI state. The BFF removes its own cookie first, then
 redirects the browser to Keycloak RP-initiated logout using Keycloak's own SSO
 cookie. No OAuth token is placed in browser storage, JavaScript, or the logout
-URL.
+URL. Flutter Web uses the returned URL for top-level navigation. Constructing a
+Keycloak URL on the client or following the redirect in a background request
+does not complete the same browser logout flow.
 
 ## Push-device registration
 

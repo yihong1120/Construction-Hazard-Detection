@@ -1,23 +1,22 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
 # YOLO Training
 
-Training and export utilities for construction-hazard YOLO models. This folder
-is separate from the live runtime: `main.py` only consumes exported `.pt` model
-files through the YOLO worker path.
+Training and export utilities for construction-hazard YOLO models. The live
+worker loads published model artefacts from the catalogue.
 
 ## Dependencies
 
-From the repository root, run `uv sync --extra training`. Add `--extra yolo-gpu`
-for TensorRT export. Commands below use `uv run --no-sync python` to preserve
-the installed optional dependencies.
+From the repository root, run `uv sync --locked --extra training`. For TensorRT
+export on CPython 3.15, follow the [native wheel setup](../../README.md#1-prepare-python).
+Use `uv run --no-sync python` afterwards to retain those wheels.
 
 ## Main Scripts
 
 - `train.py`: trains, validates, predicts, and exports Ultralytics models.
 - `export_int8_engine.py`: exports selected `models/pt` checkpoints to INT8
   TensorRT `.engine` files.
-- `test.py`: small prediction/testing helper.
+- `test.py`: optional local prediction helper, excluded from the repository.
 
 ## Train A Model
 
@@ -108,11 +107,6 @@ uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n \
 
 ## Deploy A Checkpoint
 
-Rename the selected checkpoint to the worker naming convention:
-
-```text
-models/pt/best_<model_key>.pt
-```
-
-For example, `models/pt/best_yolo26n.pt` is selected by stream configurations
-whose `model_key` is `yolo26n`.
+Publish the chosen checkpoint in the model catalogue with its path, version and
+SHA-256. Select its ID as the stream’s `model_key`. For INT8 inference, the
+engine manifest must identify the same source checkpoint and version.

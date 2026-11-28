@@ -1,46 +1,37 @@
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
 # construction-media
 
-Standalone pipeline 的程序內 FFmpeg adapter。Rust 擁有解碼器／編碼器、影格 buffer、取消期限與排程；C 只橋接 libavformat、libavcodec、libavutil 及 libswscale 的 opaque 狀態。
-不啟動 FFmpeg 子程序，不依賴 PyO3／Python。這不是把 codec 實作重新寫成 Rust，也不是 GPU 零拷貝。
+This crate connects the standalone pipeline to FFmpeg in the same process. Rust owns the decoders, encoders, frame buffers, cancellation deadlines and scheduling. A C bridge handles the opaque state of libavformat, libavcodec, libavutil and libswscale. The codecs run in FFmpeg libraries, without an FFmpeg subprocess or a Python/PyO3 dependency. Frames can still require copies.
 
-- 同一 handle 的所有呼叫都要求獨占 `&mut`；可以移交 owner 執行緒，不能同時共享使用。
-- 傳入 C 的 interrupt state 放在穩定位址的 Box，生命週期涵蓋 open、I/O、finish 與 free；回呼只查詢取消與單調時鐘期限。
-- Decoder 內部 AVFrame 不跨 ABI 借用。BGR 直接寫入呼叫端擁有的 buffer，包含最後 64 bytes SIMD padding。
-- Encoder 接收保留的 `HostFrame` 或帶有 64 bytes padding 的 BGR。保留影格直接縮放到編碼器的 YUV 平面，來源的借用範圍限於單次呼叫。YUV／packet buffer 在 handle 內重用。
-- `Encoder::Drop` 先完成 codec／muxer teardown，再釋放 handle；即使 packet drain 失敗仍關閉 muxer。RTSP socket 的關閉在 trailer，不可只呼叫 free_context。GPU session lease 必須持有至原生 handle 釋放；pipeline 關閉會 join owner 執行緒。
-- Decoder 逾時／取消由 libav interrupt callback 中斷；encoder 每次 I/O／trailer 各有 5 秒期限，讓停止收格後仍能完成本機 MP4。
-- 不含旋轉／鏡射轉換；帶有非 identity display matrix 的來源會明確拒絕。decoder 最大輸入影像為 64 Mi pixels。
-- 編譯／執行的四個 FFmpeg library major 必須一致。libav 原始日誌關閉，錯誤只回傳操作階段與錯誤碼文字，避免來源 URL 的憑證外洩。
+- Each handle requires exclusive `&mut` access. Ownership can move between threads.
+- The interrupt state passed to C lives in a `Box` at a stable address from open through I/O, finish and free. Its callback checks only cancellation and the monotonic deadline.
+- The decoder keeps its AVFrame inside the ABI boundary. It writes BGR directly into a caller-owned buffer with 64 trailing bytes of SIMD padding.
+- The encoder accepts a retained `HostFrame` or BGR with 64 bytes of padding. It scales a retained frame directly into the encoder's YUV planes, borrowing the source for one call. The handle reuses YUV and packet buffers.
+- `Encoder::Drop` tears down the codec and muxer before freeing the handle. It closes the muxer even if draining packets fails. RTSP sockets close when the trailer is written, so freeing the context alone is insufficient. Hold the GPU session lease until the native handle is released. The pipeline joins the owning thread on shutdown.
+- The libav interrupt callback interrupts decoder I/O on timeout or cancellation. Each encoder I/O or trailer operation has a five-second deadline, allowing a local MP4 to finish after capture stops.
+- The decoder rejects non-identity display matrices (rotation or reflection) and limits input to 64 Mi pixels.
+- All four FFmpeg libraries must have the same major versions at build time and run time respectively. Raw libav logs are disabled. Errors contain the stage and error-code text to keep source URL credentials out of logs.
 
-`PacketDecoder` 為 codec-only 入口，不建立 AVFormatContext 或網路 socket。
-Rust RTSP 接收器交入完整 H.264／H.265 access unit、AVCC／HVCC 參數與 RTP 時戳；bridge 複製至帶 padding 的 reference-counted AVPacket 後才交給 libavcodec。
-`send` 遇 EAGAIN 時保留原 packet、排空輸出再重試，EOF 則 flush 後排空 B-frame。
-同一 codec owner 可選 CPU 或既有 NVDEC backend；接收協定與硬體解碼彼此獨立。
-RTSP 連線、access unit 組裝和重連邏輯見 [Rust RTSP 接收器](../pipeline/src/rtsp.rs)。
+`PacketDecoder` opens the codec without creating an AVFormatContext or network socket. The Rust RTSP receiver supplies complete H.264/H.265 access units, AVCC/HVCC parameters and RTP timestamps. The bridge copies each unit into a padded, reference-counted AVPacket for libavcodec. On EAGAIN, `send` retains the packet, drains output and retries. At EOF it flushes the codec and drains the remaining B-frames. The same codec owner can use CPU decoding or NVDEC independently of the transport. [RTSP connection, access-unit assembly and reconnection](../pipeline/src/rtsp.rs)
 
-`Decoder::retain_host`／`HostFrame` 保留 CPU AVFrame 的不可變引用，Rust 可在解碼器前進或 Drop 後繼續使用。
-融合 letterbox 取樣只讀需要的 YUV 像素；完整 BGR 由 thread-safe OnceLock 在第一次消費時產生。
-不支援的比例／色彩／格式保留原轉換路徑。共享校準器也用於既有 GPU LUT，兩條路徑均另有回歸驗證。
+`Decoder::retain_host` and `HostFrame` retain an immutable reference to a CPU AVFrame. Rust can read it after the decoder advances or drops. Fused letterbox sampling reads the required YUV pixels. A thread-safe OnceLock builds the full BGR image on first use. Unsupported scales, colours and formats use the existing conversion. The GPU LUT uses the same calibrator. Each path has its own regression checks.
 
-`Encoder::open_with_host` 依首格 YUV 標記設定輸出色彩矩陣，`write_host` 以單次縮放產生 limited-range YUV420P。編碼器沿用同一個輸出色彩設定處理後續影格與 BGR 離線提示畫面。
+`Encoder::open_with_host` uses the first frame's YUV metadata to select the output colour matrix. `write_host` produces limited-range YUV420P in a single scaling pass. Later frames and BGR offline notices use the same output colour settings.
 
-`Encoder::write_host_with` 在提交編碼前短暫借出縮放後的 YUV420 平面，讓後端直接繪製標註。告警截圖使用 `HostFrame::jpeg`，連線凍結檢查使用 `HostFrame::freeze_sample`。兩者直接讀取保留的解碼影格。
+`Encoder::write_host_with` briefly lends the scaled YUV420 planes to the backend for annotation before encoding. Alert snapshots use `HostFrame::jpeg` and the freeze detector uses `HostFrame::freeze_sample`. Both read the retained decoded frame.
 
-`tap_packets` 在既有輸入讀取處複製 reference-counted packet 引用；`Remuxer` 只做 RTSP mux。
-Rust 使用有界 queue、獨立 owner、輸出 epoch 與 keyframe 恢復策略，不讓輸出 I/O 堵住解碼。
-按需輸出與原始壓縮串流轉送的設定見 [攝影機流程說明](../pipeline/README.md)。
+`tap_packets` takes reference-counted packet references as the input is read. `Remuxer` muxes them for RTSP. A bounded queue, a separate owner, output epochs and keyframe recovery prevent output I/O from blocking the decoder. [On-demand output and compressed stream forwarding](../pipeline/README.md)
 
-以 `native/pipeline/Cargo.lock` 建置與驗證，Ubuntu 需安裝：
+Build and verify with `native/pipeline/Cargo.lock`. Install the following development packages on Ubuntu.
 
 ```bash
 sudo apt-get install ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev pkg-config
 cargo test --locked --manifest-path native/pipeline/Cargo.toml --test media
 ```
 
-非系統 SDK 可設定 `FFMPEG_ROOT`，包含 `usr/include/x86_64-linux-gnu`、`usr/include` 與 `usr/lib/x86_64-linux-gnu`。
-本次實測 libavformat 62／libavcodec 62／libavutil 60／libswscale 9（FFmpeg 8）；adapter 為 FFmpeg 6 的 display matrix API 保留版本分支，尚未在本機驗證該版本。
+For an SDK outside the system paths, set `FFMPEG_ROOT` to the prefix containing `usr/include/x86_64-linux-gnu`, `usr/include` and `usr/lib/x86_64-linux-gnu`. The tested versions were libavformat 62, libavcodec 62, libavutil 60 and libswscale 9 (FFmpeg 8). The adapter also has a version-specific branch for FFmpeg 6's display-matrix API. That version has yet to be verified locally.
 
-`native/pipeline/tests/media.rs` 驗證逐像素 BGR、Full HD resize、BT.709 full-range、B-frame EOF drain、MP4 完整格數、取消與提前 Drop。
-[服務整合測試](../pipeline/tests/services.rs) 使用隔離的 loopback MediaMTX，驗證 RTSP socket 在反覆 Drop 後正確關閉。
+`native/pipeline/tests/media.rs` checks pixel-exact BGR output, Full HD resizing, full-range BT.709, B-frame draining at EOF, complete MP4 frame counts, cancellation and early drop. The [service integration tests](../pipeline/tests/services.rs) use an isolated loopback MediaMTX instance to verify that successive drops close the RTSP sockets.
 
-參考原生協定：[解碼 send／receive](https://ffmpeg.org/doxygen/8.0/demux_decode_8c-example.html)、[編碼與 mux](https://ffmpeg.org/doxygen/8.0/mux_8c-example.html)、[RTSP teardown](https://github.com/FFmpeg/FFmpeg/blob/n8.0/libavformat/rtspenc.c)。
+See the native interfaces for [decoder send/receive](https://ffmpeg.org/doxygen/8.0/demux_decode_8c-example.html), [encoding and muxing](https://ffmpeg.org/doxygen/8.0/mux_8c-example.html) and [RTSP teardown](https://github.com/FFmpeg/FFmpeg/blob/n8.0/libavformat/rtspenc.c).

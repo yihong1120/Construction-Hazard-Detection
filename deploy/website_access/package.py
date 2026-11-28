@@ -24,7 +24,7 @@ def main():
         paths.append(target)
     for name in (
         'deploy.py', 'agent.py', 'snapshot.py', 'migrate.py',
-        'README.md',
+        'README.md', 'README-zh-tw.md',
     ):
         target = destination / name
         shutil.copyfile(Path(__file__).parent / name, target)

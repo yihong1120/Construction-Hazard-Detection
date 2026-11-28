@@ -134,3 +134,7 @@ deploy/bff/nginx.changdar-server.complete.conf
 outputs
 
 frontend
+!/frontend/
+/frontend/*
+!/frontend/README.md
+!/frontend/README-zh-tw.md

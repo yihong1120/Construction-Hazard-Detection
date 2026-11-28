@@ -60,8 +60,9 @@ To set up the development environment:
 2. **Install the locked development environment**:
 
    ```bash
-   # Activate a Python 3.15 environment first.
-   python deploy/python315/bootstrap.py --cpu-only
+   uv sync --locked
+   .venv/bin/python deploy/python315/bootstrap.py --cpu-only
+   source .venv/bin/activate
    ```
 
 3. **Install pre-commit hooks**:
@@ -81,6 +82,10 @@ To set up the development environment:
    ```
 
 ## Submitting Changes
+
+Keep each project README in British English (`README.md`) and Taiwanese Traditional
+Chinese (`README-zh-tw.md`). Link the two versions at the top of each file and
+update commands, configuration examples and operational notes in both languages.
 
 When you're ready to submit your changes, follow these steps:
 

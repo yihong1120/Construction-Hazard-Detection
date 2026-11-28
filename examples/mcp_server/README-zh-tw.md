@@ -1,6 +1,6 @@
-# Construction Hazard Detection MCP
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-[English](README.md) | [繁體中文](README-zh-tw.md)
+# 工地危害辨識 MCP 服務
 
 MCP 是 AI 客戶端存取偵測、違規紀錄、模型與多平台通知的選用入口。
 它沿用現有 API、OIDC 授權與工地權限，不另建帳號或資料庫。
@@ -10,12 +10,12 @@ MCP 是 AI 客戶端存取偵測、違規紀錄、模型與多平台通知的選
 從 repo 根目錄執行：
 
 ```bash
-uv sync --extra mcp
+uv sync --locked --extra mcp
 MCP_TRANSPORT=stdio uv run --no-sync python -m examples.mcp_server.main
 ```
 
 僅需查詢、上傳、FCM、模型下載與幾何工具時，不需安裝 GPU 或影像套件。
-本機推論及危害分析另需 `uv sync --extra mcp --extra yolo`；
+本機推論及危害分析另需 `uv sync --locked --extra mcp --extra yolo`；
 串流截圖另需 `--extra streaming` 或 `--extra yolo`。
 重型依賴在呼叫相關工具時才載入。
 
@@ -39,7 +39,7 @@ Agent 協調、對話、LLM 路由與用量歸屬由相鄰的 `ai-gateway` repo 
 偵測、危害規則、違規資料、通知及此領域 MCP server 留在本 repo。
 Gateway 透過服務契約串接，不跨 repo 匯入 Python 模組或複製工安資料表模型。
 
-多人使用的 gateway 改由本 repo 的[個人 OIDC 唯讀 MCP 入口](agent_reads/README.md)串接。
+多人使用的 gateway 改由本 repo 的[個人 OIDC 唯讀 MCP 入口](agent_reads/README-zh-tw.md)串接。
 工具名稱、描述、JSON schema、查詢投影及分頁規則留在這裡；gateway 僅以通用 MCP
 connector 及明確允許清單動態探索。原 stdio／8092 入口仍使用已配置的 worker 身分，
 不作為個人查詢的備援。
@@ -101,7 +101,7 @@ active 的本機帳號及當前工地權限。既有 HTTP 唯讀 API 不變；�
 常駐偵測由現有 `main.py` worker 流程管理；移除原先只回傳「未支援」的串流控制工具。
 `violations_get_image` 的網址仍需 API Bearer 授權；可用 `as_base64=true` 直接讀取圖片。
 
-多平台通知安裝 `uv sync --extra mcp --extra social-notifications`。
+多平台通知安裝 `uv sync --locked --extra mcp --extra social-notifications`。
 平台 SDK 與影像依賴於呼叫相關工具時才載入；設定請參閱 `.env.example`。
 FCM 使用 OIDC 服務帳號，其他平台使用各自 token／secret。
 未配置的平台會在呼叫时回報錯誤，不影響 MCP 啟動。

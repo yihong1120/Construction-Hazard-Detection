@@ -1,10 +1,12 @@
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
 # Device-specific YOLO26 stream engines
 
-The published model catalog continues to identify and verify the original
+The published model catalogue continues to identify and verify the original
 checkpoint. `YOLO_WORKER_ARTIFACT_MANIFEST` optionally selects a separately
 hashed TensorRT engine for streaming when `YOLO_WORKER_PRECISION=int8`.
-Each variant is bound to the catalog's version and checkpoint checksum.
-Image inference and catalog authorization are unchanged.
+Each variant is bound to the catalogue's version and checkpoint checksum.
+Image inference and catalogue authorisation are unchanged.
 
 The B deployment bundle lives in
 `~/service-migration-phase7/runtime-fixes/yolo26-mixed-int8`. It contains pinned
@@ -16,7 +18,7 @@ Original engines are retained. No calibration package or dataset is needed.
 
 ## Optional profiles for the Rust pipeline
 
-The default build keeps batch 1, the established artifact paths and the
+The default build keeps batch 1, the established artefact paths and the
 `engines.json` consumed by `manage.py`. For an isolated RTX 3050 candidate,
 pass `--max-batch` between 1 and 4 to `build.py`. The input dimensions stay at
 640 × 640. The profile accepts all batch sizes from 1 through the maximum. The
@@ -32,7 +34,7 @@ python build.py --max-batch 4 --opt-batch 2
 ```
 
 This produces the engines, profile-specific receipts and manifest in
-`candidates/batch-1-2-4/`. The build checks the serialized TensorRT profile and
+`candidates/batch-1-2-4/`. The build checks the serialised TensorRT profile and
 runs representative inputs at sizes 1, 2, 3 and 4 before publishing the
 candidate manifest. The legacy manager continues to use the batch-1 manifest.
 An isolated Rust pipeline can select the candidate manifest and test it with
@@ -40,7 +42,7 @@ An isolated Rust pipeline can select the candidate manifest and test it with
 
 Use `--max-batch 2 --model yolo26m` to build only that pinned model. Overlay
 the resulting entry on a copy of the active manifest to test a mixed profile.
-Keep the active entries for the other models and verify the artifact
+Keep the active entries for the other models and verify the artefact
 checksums in the mixed manifest before selecting it.
 
 ## Batch-1 deployment
@@ -67,8 +69,8 @@ Completed engines are reused only when their source and output hashes match.
 Build success does not switch production; `apply` is the separate switch.
 Engine filenames now include the model revision and source digest. Rebuilding
 preserves previous engine files and retains two previous entries in the manifest,
-so a catalog publication can verify and restore its prior engine. Do not remove
-those artifacts before a publication has completed its restoration window.
+so a catalogue publication can verify and restore its prior engine. Do not remove
+those artefacts before a publication has completed its restoration window.
 Apply backs up the two runtime modules and private service configuration,
 tests every engine through the installed worker with real sample images,
 then starts camera workers and checks the three websites. Failure restores
@@ -81,5 +83,5 @@ sudo python3 "$HOME/service-migration-phase7/runtime-fixes/yolo26-mixed-int8/man
 Smoke tests verify executable compatibility, output validity and class IDs;
 they do not establish detection accuracy or an mAP regression bound. Review
 representative camera detections after switching and measure throughput
-under the real camera topology. Annotated frame/box synchronization remains
+under the real camera topology. Annotated frame/box synchronisation remains
 handled by the independent overlay fix.

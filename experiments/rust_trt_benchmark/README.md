@@ -1,77 +1,53 @@
-# 同一 INT8 TensorRT engine 的 Python／Rust 比較
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-這個效能實驗以本機影片、測試圖片與 TensorRT engine 比較兩種推論路徑，執行後產生 `results.json`。
+# Python and Rust inference with the same INT8 TensorRT engine
 
-## 比較的實作
+This experiment compares two inference paths using local video, test images and a TensorRT engine. It writes the results to `results.json`.
 
-- Python：repo `uv.lock` 鎖定的 Ultralytics 8.4.183；此輪使用 `rect=True`、
-  `quantize=8`。正式 worker 的 INT8 設定為 `rect=False`；本輪只重現矩形
-  對照實驗，正式整合請見 [native/inference](../../native/inference/README.md)。
-- Rust：Rust 負責批次、letterbox 尺寸、警示前的偵測結果篩選及座標還原；
-  透過小型 C++ ABI 呼叫 OpenCV 與 TensorRT。BGR→RGB、HWC→CHW、正規化
-  合併成一個 CUDA kernel，使用 NVRTC 於初始化時編譯。
-- 兩邊使用**同一個現有 INT8 `.engine` 及相同 TensorRT 11.1 共享函式庫**，
-  都呼叫同步 `executeV2`。Rust 不使用 Python 或 PyTorch 執行推論。
-- 此實驗沒有使用 `ultralytics-inference` crate；該套件主要從 ONNX 載入，
-  與直接沿用現有 engine 是不同實作路徑。
+## Implementations
 
-Rust 的 fused kernel、簡化結果建構及 Rust／C++ 的呼叫方式都會影響結果，
-不能將差異全部歸因於程式語言。使用 PyTorch CUDA 建立的 256 項正規化 LUT
-確保每個 uint8 值與參考實作得到相同浮點結果。
+- Python uses Ultralytics 8.4.183 as pinned in `uv.lock` for this run, with `rect=True` and `quantize=8`. This reproduces the rectangular-input comparison. The production INT8 worker uses `rect=False`. [Production Rust inference](../../native/inference/README.md)
+- Rust handles batching, letterbox dimensions, detection filtering before hazard analysis and coordinate restoration. A small C++ ABI calls OpenCV and TensorRT. A fused CUDA kernel performs BGR-to-RGB conversion, HWC-to-CHW conversion and normalisation. NVRTC compiles it during initialisation.
+- Both use **the same existing INT8 `.engine` and the same TensorRT 11.1 shared library** and call synchronous `executeV2`. Rust inference runs without Python or PyTorch.
+- This experiment loads the engine directly. The `ultralytics-inference` crate, which primarily loads ONNX files, is outside its scope.
 
-## 輸入、正確性及計時
+Timing differences include the fused kernel, simplified result construction and the Rust/C++ calling convention. A 256-entry normalisation lookup table generated with PyTorch CUDA gives exactly the same floating-point result for each uint8 value as the reference implementation.
 
-`tests/videos/test.mp4` 每 18 格取樣，共 48 格，另加本機測試圖片 10 張。
-輸入先解碼為 BGR bytes，讀檔及解碼不計時。保留 Ultralytics 的 `rect=True`、
-stride=32、`imgsz=640`，所以實際 tensor 可以是 352×640 等矩形；不同形狀
-混合成 batch 時使用完整 640×640。batch 8 的最後一批有 2 張。
+## Inputs, correctness and timing
 
-測試 YOLO26n／YOLO26s、batch 1／8。每一個設定先比對 58 格：
+The input consists of 48 frames sampled every 18 frames from `tests/videos/test.mp4`, plus 10 local test images. Files are decoded to BGR bytes before timing. The test keeps Ultralytics `rect=True`, stride 32 and `imgsz=640`. This permits rectangular tensors such as 352×640. Batches with mixed shapes use 640×640. For batch size 8, the final batch contains two images.
 
-1. 正規化後的輸入 tensor 必須逐位元相等，否則停止。
-2. 比較所有原始網路輸出並記錄最大誤差。
-3. 偵測數量、類別、順序必須一致；confidence 誤差不得超過 1e-5，原圖
-   座標誤差不得超過 0.002 pixel，否則停止。
+YOLO26n and YOLO26s each run at batch sizes 1 and 8. Each configuration checks all 58 frames before timing.
 
-兩個量測範圍分開計時：
+1. Compare normalised input tensors bit for bit and stop on any difference.
+2. Compare all raw network outputs and record the maximum error.
+3. Require the same detection count, classes and order. Stop if confidence differs by more than 1e-5 or original-image coordinates by more than 0.002 pixels.
 
-| 名稱 | 範圍 |
+The benchmark times two sections separately.
+
+| Name | Scope |
 | --- | --- |
-| `infer` | 同一批預先放在 GPU 的輸入，呼叫 TensorRT backend，輸出留在 GPU；包含主機呼叫與同步成本 |
-| `detect` | 記憶體中的 BGR 影格→letterbox→傳輸／正規化→推論→信心值篩選→原圖座標與 CPU 偵測列 |
+| `infer` | Calls TensorRT with the same batch already on the GPU and keeps the output there. Includes host call and synchronisation time. |
+| `detect` | Starts with in-memory BGR frames and includes letterboxing, transfer, normalisation, inference and confidence filtering. Returns CPU detection rows in original-image coordinates. |
 
-暖機後，固定在同一個 Intel P-core 執行 7 輪，Python／Rust 輪流先跑；
-OpenCV／PyTorch 的 CPU 計算執行緒設為 1，driver／TensorRT 仍有輔助執行緒。
-JSON 命令、結果讀寫、模型載入及初始化均在計時外；Rust 逐格結果配置計入。
-`mean_ms_per_image` 使用該輪總耗時／實際影格數，沒有把最後 2 張當成 8 張。
-`p95_ms_per_batch` 是批次延遲，不是逐張延遲。加速比為每輪比值的中位數，
-最小／最大範圍不是信賴區間。這不是只用單一 CUDA event 得到的純 kernel 時間。
+After warm-up, both implementations run seven alternating rounds pinned to the same Intel P-core. OpenCV and PyTorch use one CPU compute thread. The driver and TensorRT still have helper threads. Timings include per-frame result allocation in Rust. JSON commands, reading/writing results, loading the model and initialisation are outside the timed interval. `mean_ms_per_image` divides elapsed time by the actual number of frames, counting the final two images as two. `p95_ms_per_batch` reports batch latency. Speed-up is the median of paired round ratios and the range gives observed extremes. These measurements include more than GPU kernel time.
 
-`detect` 不包含攝影機、解碼、shared-memory／queue IPC、batch 等待、追蹤、
-危險規則、繪圖、編碼、儲存與通知，因此不是完整伺服器的可承載鏡頭數。
-GPU 既有工作負載保留，每輪前後記錄 `nvidia-smi`；幾個百分點的差異需要
-視為可能的外部負載／時脈波動。
+`detect` excludes camera capture, decoding, shared-memory/queue IPC, batch waits, tracking, hazard rules, drawing, encoding, storage and notifications. It cannot establish how many cameras a complete server can handle. Existing GPU workloads continue to run. Each round records `nvidia-smi` before and after, so small percentage differences may reflect external load or clock changes.
 
-## 重現
+## Reproducing the experiment
 
-需要 Python 3.15 與 repo 的推論相依套件、Rust 1.93.1、C++17 compiler、
-TensorRT 11.1 的 matching headers／runtime／Python bindings、OpenCV core
-與 imgproc、CUDA runtime／driver／NVRTC。OpenCV 的測試版本為 C++ 4.10.0、
-Python 5.0.0，前處理逐位元相等是必要驗證。CUDA kernel 此次以 `sm_89`
-編譯，只驗證 RTX 4090；使用其他 GPU 前需調整 `bridge.cpp` 的架構選項。
+Use Python 3.15 with the project's inference dependencies, Rust 1.93.1, a C++17 compiler, matching TensorRT 11.1 headers, runtime and Python bindings, OpenCV core and imgproc, and the CUDA runtime, driver and NVRTC. The tested OpenCV versions were C++ 4.10.0 and Python 5.0.0. Preprocessing must match bit for bit. The CUDA kernel was built for `sm_89` and tested on an RTX 4090. Adjust the architecture in `bridge.cpp` before using another GPU.
 
-在隔離環境準備可載入同一 engine 的 TensorRT 版本及共享函式庫。
-`PYTHONPATH` 與 `LD_LIBRARY_PATH` 應指向彼此匹配的 Python bindings 與 runtime。
+Prepare an isolated environment with a TensorRT version and shared libraries capable of loading the same engine. Point `PYTHONPATH` and `LD_LIBRARY_PATH` to matching Python bindings and runtime libraries.
 
-依環境設定路徑，`CUDA_INCLUDE` 必須是完整的 toolkit headers，`CUDA_LIB`
-需提供可連結的 `libcudart.so`／`libnvrtc.so`：
+Adjust the paths for your installation. `CUDA_INCLUDE` must contain the full toolkit headers. `CUDA_LIB` must provide linkable `libcudart.so` and `libnvrtc.so`.
 
 ```bash
 export TRT_INCLUDE=/path/to/TensorRT-11.1/include
 export TRT_LIB=/path/to/TensorRT-11.1/lib
 export CUDA_INCLUDE=/path/to/cuda/include
 export CUDA_LIB=/path/to/cuda/lib
-export OPENCV_ROOT=/path/to/opencv-prefix  # 系統安裝可填 /
+export OPENCV_ROOT=/path/to/opencv-prefix  # Use / for a system installation
 export PYTHONPATH=/path/to/isolated-python-packages
 export LD_LIBRARY_PATH="$TRT_LIB:$CUDA_LIB:$OPENCV_ROOT/usr/lib/x86_64-linux-gnu"
 export PYTHON_DOTENV_DISABLED=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
@@ -83,11 +59,6 @@ python experiments/rust_trt_benchmark/benchmark.py \
   --models yolo26n yolo26s --batches 1 8 --rounds 7 --core 4
 ```
 
-`data/` 忽略於 Git，保存輸入 manifest、BGR 影格、正規化 LUT、原始逐批時間、
-worker log 及最近一次驗證的 tensor／網路輸出。每種設定的所有計時輪次摘要
-保存在 `results.json`，包含 engine、runtime、原始碼與輸入的 SHA256。
-`VmHWM` 是整個測試程序的 CPU 峰值 RSS，包含 framework、輸入及 buffers；
-兩個程序都先載入相同的 58 格，不代表整套伺服器的每鏡頭記憶體。
+Git ignores `data/`. It stores the input manifest, BGR frames, normalisation LUT, raw per-batch timings, worker logs and tensors/network outputs from the latest verification. `results.json` records timing rounds for every configuration and SHA-256 hashes of the engine, runtime, source and input. `VmHWM` is the peak CPU RSS of the entire test process, including the framework, inputs and buffers. Both processes preload the same 58 frames. This figure does not measure per-camera memory on the complete server.
 
-參考：[NVIDIA TensorRT runtime API](https://docs.nvidia.com/deeplearning/tensorrt/10.x.x/inference-library/c-api-docs.html)、
-[Ultralytics 官方 Rust 推論](https://docs.ultralytics.com/inference/)。
+See the [NVIDIA TensorRT runtime API](https://docs.nvidia.com/deeplearning/tensorrt/10.x.x/inference-library/c-api-docs.html) and [Ultralytics Rust inference](https://docs.ultralytics.com/inference/).

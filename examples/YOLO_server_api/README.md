@@ -1,4 +1,4 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
 Model discovery, defaults, and the Flutter integration contract: [Model API](DETECTION_MODEL_API.md) (Traditional Chinese).
 
@@ -15,9 +15,11 @@ Use this service when you deliberately want inference behind an API boundary.
 
 - `POST /detect`: accepts one uploaded image and returns YOLO detections.
 - `WebSocket /ws/detect`: accepts image bytes and returns detections.
-- `POST /model_file_update`: uploads a replacement `.pt` model file.
-- `POST /get_new_model`: returns an updated model file when a client has an old
-  timestamp.
+- `POST /model_file_update`: the former `.pt` upload endpoint checks model-management
+  privileges and returns HTTP 409 `IMMUTABLE_MODEL_REGISTRY` to authorised users.
+  Publish a new version on Hugging Face and synchronise the catalogue key.
+- `POST /get_new_model`: validates the supplied timestamp and returns the verified model
+  file, or HTTP 304 when the client’s `If-None-Match` matches the artefact’s ETag.
 
 Detection results are lists in this shape:
 
@@ -31,8 +33,8 @@ Detection results are lists in this shape:
 - `routers.py`: detection and model-management routes.
 - `websocket_handlers.py`: optional WebSocket detection path.
 - `detection.py`: image decode, inference, and bounding-box post-processing.
-- `models.py`: model manager and file watcher.
-- `model_files.py`: streaming SHA-256 checksums for model delivery; artifact paths and uploads use the registry in `routers.py`.
+- `models.py`: versioned model cache and leases for active inference.
+- `model_files.py`: streaming SHA-256 checksums for model delivery. Model file paths come from the catalogue.
 - `config.py`: runtime settings, including device selection.
 - `schemas.py`: request and response models.
 
@@ -52,22 +54,15 @@ model loads. Multiple Uvicorn workers do not share a loaded PyTorch model.
 
 ## Configuration
 
-Common environment variables:
+Deployment example (HTTP detection endpoints enforce authentication directly):
 
 ```dotenv
-DETECT_API_AUTH_REQUIRED=true
-DETECT_SERVER_MODEL_KEYS=yolo26n,yolo26s
+# DETECT_API_AUTH_REQUIRED=true (obsolete)
 DETECT_API_URL=http://127.0.0.1:8000
-YOLO_MODEL_DIR=models/pt
 ```
 
-Model files are expected to follow the project convention:
-
-```text
-models/pt/best_<model_key>.pt
-```
-
-For example, `model=yolo26n` loads `models/pt/best_yolo26n.pt`.
+The model ID selects a published catalogue entry. The service verifies the
+artefact against the SHA-256 recorded for that version before loading it.
 
 ## Authentication
 
@@ -88,7 +83,7 @@ scheme. A separate WSS domain needs a corresponding deployment configuration.
 The existing same-host pipeline option `YOLO_WS_ALLOW_LOCALHOST_BYPASS` remains
 available; set it to `false` to require authentication on all connections.
 
-Model upload endpoints require model-management privileges.
+The former upload endpoint checks for the `admin` or `model_manage` role before returning the immutable-catalogue response.
 
 ## Performance Notes
 

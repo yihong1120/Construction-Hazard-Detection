@@ -1,15 +1,15 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-# YOLO Evaluation
+# YOLO 模型評估
 
 用於評估訓練後 YOLO 工地危害模型的工具。建議在將新模型複製到 `models/pt/` 前，先用
 這些腳本比較 checkpoint 表現。
 
-## 安裝依賴
+## 安裝相依套件
 
-在 repo 根目錄執行 `uv sync --extra training`。需要 TensorRT 匯出時，
-再加入 `--extra yolo-gpu`。以下命令使用 `uv run --no-sync python`，
-確保使用已安裝選用依賴的環境。
+從專案根目錄執行 `uv sync --locked --extra training`。使用 CPython 3.15 匯出 TensorRT
+引擎時，請依[原生套件安裝說明](../../README-zh-tw.md#1-準備-python)建置 wheel，之後使用
+`uv run --no-sync python` 執行指令，以保留這些套件。
 
 ## 腳本
 
@@ -17,7 +17,7 @@
 - `evaluate_yolo.py`：使用 Ultralytics 與 `data.yaml` 驗證模型。
 - `evaluate_sahi_yolo.py`：使用 SAHI sliced inference 與 COCO metrics 評估。
 
-## YOLO Label 轉 COCO
+## 將 YOLO 標註轉成 COCO 格式
 
 ```bash
 uv run --no-sync python examples/YOLO_evaluation/convert_yolo_to_coco.py \
@@ -48,5 +48,4 @@ SAHI 對小物件漏檢分析很有幫助，但比直接 Ultralytics validation 
 
 ## 部署位置
 
-正式 worker 會從 `models/pt/` 載入 `best_<model_key>.pt`。評估完成後，只將選定的
-checkpoint 放入該目錄，並在 database management API 設定對應 stream 的 `model_key`。
+完成評估後，在模型目錄發布選好的權重檔，再透過資料管理 API 設定串流的 `model_key`。

@@ -1,43 +1,41 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-# Streaming Web Backend
+# 網頁串流後端
 
-用於 live-view metadata、stream discovery、MediaMTX 存取授權與 WebRTC ICE 設定的
-FastAPI 服務。它不透過 Redis 或 WebSocket 傳送 video frame；影像播放由 MediaMTX 透過
-HLS 或 WebRTC 提供。
+FastAPI 服務負責列出可觀看的串流，提供直播中繼資料、MediaMTX 存取授權和 WebRTC ICE 設定。影像由 MediaMTX 透過 HLS 或 WebRTC 傳送。
 
-## Runtime 角色
+## 執行時的職責
 
 ```text
 main.py / src/stream_processor.py
         |
-        +--> 發布 clean 與 annotated H.264 streams 到 MediaMTX
-        +--> 將 compact warning metadata 寫入 Redis
+        +--> 將原始及標註後的 H.264 串流發布至 MediaMTX
+        +--> 將精簡的警示中繼資料寫入 Redis
 
 streaming_web
         |
-        +--> 從 PostgreSQL 列出 labels 與 streams
-        +--> 回傳 MediaMTX HLS/WebRTC playback URLs
-        +--> 透過 SSE/WebSocket 傳送 compact metadata
-        +--> Nginx proxy MediaMTX 前先驗證 /media-auth
+        +--> 從 PostgreSQL 取得可觀看的工地與串流
+        +--> 回傳 MediaMTX 的 HLS／WebRTC 播放網址
+        +--> 透過 SSE／WebSocket 傳送中繼資料
+        +--> 使用 /media-auth 驗證請求，再由 Nginx 轉送至 MediaMTX
 ```
 
 ## 檔案
 
-- `app.py`：FastAPI application 設定。
-- `routers.py`：只保留含 dependency injection 的 HTTP 與 WebSocket 宣告。
-- `application_services.py`：request-scoped application-service composition。
-- `streaming_api_service.py`：media authorisation 與 playback API policy。
-- `playback_service.py`：playback sessions、playlists 與 producer demand leases。
-- `stream_catalog_service.py`：授權後的 site 與 stream catalogues。
-- `streaming_metadata_service.py`：授權後的 SSE 與 WebSocket response setup。
-- `streaming_metadata_handlers.py`：共用 metadata SSE 與 WebSocket transports。
-- `redis_service.py` 與 `metadata_keys.py`：compact metadata Redis contract。
-- `media_paths.py`：canonical MediaMTX paths、public URLs 與 demand keys。
-- `overlay_renderer.py`：支援多語且有快取的 overlay rendering helpers。
-- `webrtc_service.py`：STUN/TURN ICE-server response builder。
-- `schemas.py`：驗證過的 HTTP 與 Redis payload contracts。
-- `nginx.hazard-media.conf`：Nginx media proxy 與 authorisation configuration。
+- `app.py`：FastAPI 應用程式設定。
+- `routers.py`：宣告 HTTP 與 WebSocket 路由，注入所需的服務。
+- `application_services.py`：為每個請求組合所需的應用服務。
+- `streaming_api_service.py`：媒體授權與播放 API 政策。
+- `playback_service.py`：播放工作階段、播放清單與反映觀看需求的發布租約。
+- `stream_catalog_service.py`：依權限列出工地與串流。
+- `streaming_metadata_service.py`：在授權後建立 SSE 或 WebSocket 回應。
+- `streaming_metadata_handlers.py`：共用的 SSE 和 WebSocket 中繼資料傳輸邏輯。
+- `redis_service.py` 與 `metadata_keys.py`：精簡中繼資料在 Redis 中的鍵值與格式。
+- `media_paths.py`：MediaMTX 路徑、公開網址及觀看需求的鍵值。
+- `overlay_renderer.py`：具快取功能的多語疊圖繪製工具。
+- `webrtc_service.py`：產生 STUN／TURN ICE 伺服器設定。
+- `schemas.py`：定義並驗證 HTTP 與 Redis 的資料格式。
+- `nginx.hazard-media.conf`：Nginx 的媒體代理與授權設定。
 
 ## 執行
 
@@ -49,24 +47,20 @@ uvicorn examples.streaming_web.app:app \
   --timeout-graceful-shutdown 10
 ```
 
-## Endpoints
+## API 端點
 
-- `GET /labels`：登入使用者可存取的 site labels。
-- `GET /streams/{label}`：stream IDs 與 HLS/WebRTC playback URLs。
-- `GET /metadata/stream-id/{label}/{stream_id}`：SSE warning metadata。
-- `WebSocket /ws/metadata-id/{label}/{stream_id}`：metadata-only WebSocket。
-- `GET /overlay-languages`：可用的後端 overlay languages。
-- `POST /stream-playback`：底層單鏡頭 playback primitive，由 db_management
-  playback facade 呼叫。
-- `POST /stream-playback/batch`：為多鏡頭牆建立最多 24 個 playback items。
-- 播放清單與播放牆只會回傳已開啟 `recognition_enabled` 的串流；關閉的串流不會
-  佔用播放牆站位。
-- 播放使用短效、可撤銷的 Redis capability；建立 capability 時會驗證使用者狀態
-  與工地權限，因此 HLS segment 授權不會查詢 PostgreSQL。
-- `GET /stream-playback/sessions/{id}/index.m3u8`：stable playlist endpoint，會
-  依目前 clean/overlay 狀態取 MediaMTX playlist，並將 `mt` 補到 fragment URL。
-- `GET /webrtc/ice-servers`：WebRTC clients 使用的 STUN/TURN settings。
-- `GET /media-auth`：給 Nginx `auth_request` 驗證 MediaMTX paths。
+- `GET /labels`：列出登入者可存取的工地標籤。
+- `GET /streams/{label}`：取得串流 ID 與 HLS／WebRTC 播放網址。
+- `GET /metadata/stream-id/{label}/{stream_id}`：透過 SSE 傳送警示中繼資料。
+- `WebSocket /ws/metadata-id/{label}/{stream_id}`：透過 WebSocket 傳送中繼資料。
+- `GET /overlay-languages`：列出後端支援的疊圖語言。
+- `POST /stream-playback`：建立單一攝影機的播放項目，供資料管理服務的播放介面呼叫。
+- `POST /stream-playback/batch`：為攝影機牆建立最多 24 個播放項目。播放清單與攝影機牆只納入已啟用 `recognition_enabled` 的串流。
+- `GET /stream-playback/sessions/{id}/index.m3u8`：透過固定網址讀取當前原始或標註畫面的 MediaMTX 播放清單，並將 `mt` 加入各片段網址。
+- `GET /webrtc/ice-servers`：取得 WebRTC 用戶端的 STUN／TURN 設定。
+- `GET /media-auth`：供 Nginx 的 `auth_request` 驗證 MediaMTX 路徑。
+
+建立播放授權時會檢查使用者狀態和工地權限。短效授權可從 Redis 撤銷，讀取 HLS 片段時無須查詢 PostgreSQL。
 
 ## 必要設定
 
@@ -88,35 +82,25 @@ OIDC_AUDIENCE=visionnaire-api
 OIDC_ACCOUNT_URL=https://sso.example.com/realms/visionnaire/account
 ```
 
-各 API service 共用同一組 OIDC issuer、JWKS URL 與 API audience 設定。
+各 API 服務共用同一組 OIDC 簽發者、JWKS 網址與 API audience 設定。
 
 ## 直播影像路徑
 
-- MediaMTX 負責 HLS 與 WebRTC。
-- detail 與 preview HLS path 分開發布。preview 預設由 `MEDIA_PREVIEW_*` 限制為
-  640x360、15 FPS、500–700 kb/s；使用者選定的單鏡頭才使用 detail rendition。
-- Annotated overlay 會在發布到 MediaMTX 前畫好。
-- Redis 只保存 compact metadata 與 overlay demand/ready keys。
-- SSE/WebSocket payload 是小型 metadata，不是影像 frame。
+MediaMTX 分別發布預覽與詳細畫質的 HLS 路徑。預覽由 `MEDIA_PREVIEW_*` 控制，預設為 640×360、15 FPS、500–700 kb/s。選定單一攝影機後才使用詳細畫質。後端在發布前畫上標註，並控制影格發布間隔。
 
-這樣可以避免 browser 與 mobile clients 額外解碼 JPEG payload，同時讓後端控制 frame pacing
-與 overlay rendering。
+Redis 保存精簡中繼資料及疊圖的需求、就緒狀態。SSE 與 WebSocket 傳送中繼資料，瀏覽器及行動裝置可直接播放串流，省去額外的 JPEG 解碼。
 
 ## MediaMTX 與 Nginx
 
-公開 MediaMTX URL 建議放在 Nginx `auth_request` 後面。Nginx 將獨立的 media
-bearer/cookie 與 `X-Original-URI` 轉送至：
+公開的 MediaMTX 網址可交由 Nginx 的 `auth_request` 驗證。Nginx 會將媒體專用的 Bearer 權杖或 Cookie，以及 `X-Original-URI`，送到下列端點。
 
 ```text
 GET /media-auth
 ```
 
-backend 會從 Redis 解析 db_management playback facade 建立的 opaque media
-capability，強制限制指定的 site/camera/profile，並重新檢查目前 user/site 權限，
-再讓 Nginx proxy request 到 MediaMTX。HLS URL 必須帶短效 `mt` media token；
-主 access token、`token=` query、舊 media-session cookie 都不再接受。
+後端從 Redis 讀取資料管理服務建立的播放授權，檢查指定工地、攝影機、畫面模式及使用者目前的工地權限，再由 Nginx 轉送請求至 MediaMTX。HLS 網址須帶短效媒體權杖 `mt`。主要 API 權杖、`token=` 查詢參數與舊的媒體工作階段 Cookie 均無法用於此端點。
 
-除非需要 rewind，HLS live window 請保持短：
+若觀眾只需觀看即時影像，可使用較短的 HLS 播放視窗。
 
 ```dotenv
 MTX_HLSSEGMENTDURATION=2s
@@ -127,13 +111,13 @@ MTX_HLSMUXERCLOSEAFTER=60s
 
 ## WebRTC ICE
 
-LAN 測試時 STUN 可能已足夠：
+區域網路測試可先使用 STUN。
 
 ```dotenv
 STREAMING_WEBRTC_STUN_URLS=stun:stun.l.google.com:19302
 ```
 
-Internet viewers 建議設定 TURN。若使用 coturn REST credentials：
+網際網路觀看端可配置 TURN。以下範例使用 coturn REST 憑證。
 
 ```dotenv
 STREAMING_WEBRTC_TURN_URLS=turn:example.com:3478?transport=udp,turn:example.com:3478?transport=tcp
@@ -141,8 +125,7 @@ STREAMING_WEBRTC_TURN_SHARED_SECRET=<same-secret-as-coturn>
 STREAMING_WEBRTC_TURN_TTL_SECONDS=600
 ```
 
-TURN relay traffic 使用 ICE over UDP/TCP，不會經過 HTTPS reverse proxy。請使用 shared
-secret、firewall rules 與較窄的 relay port range 保護 coturn。
+TURN 透過 UDP／TCP 中繼 ICE 流量，連線不經 HTTPS 反向代理。請為 coturn 設定共用密鑰、防火牆規則及適當的中繼連接埠範圍。
 
 ## 測試
 
@@ -150,10 +133,10 @@ secret、firewall rules 與較窄的 relay port range 保護 coturn。
 pytest tests/examples/streaming_web -q
 ```
 
-Overlay 語言設定由 `OverlayLanguagePolicy` 共用：
+疊圖語言設定由 `OverlayLanguagePolicy` 共用：
 `MEDIA_OVERLAY_ALLOWED_LANGUAGES` 與 `MEDIA_DEFAULT_OVERLAY_LANGUAGE` 都會將
 `zh`、`zh_Hant`、`en-US` 等已知別名轉為標準代碼，並移除重複項目。
-空清單、未知語言與不在允許清單中的預設語言會被拒絕，避免 API 與 producer
-採用不同設定。串流服務啟動時驗證，producer 在每路串流的生命週期內保留
+空清單、未知語言與不在允許清單中的預設語言會被拒絕，避免 API 與串流發布端
+採用不同設定。串流服務啟動時驗證，發布端在每路串流的生命週期內保留
 同一份不可變政策；修改環境設定後須重啟相關服務與串流。
 此政策不更動來源、發布或預覽 FPS。

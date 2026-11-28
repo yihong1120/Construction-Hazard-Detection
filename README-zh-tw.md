@@ -1,6 +1,6 @@
 🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-# Construction Hazard Detection
+# 工地危害辨識（Construction Hazard Detection）
 
 <img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI 工地安全監測橫幅">
 
@@ -176,7 +176,7 @@ flowchart LR
 Flutter 前端原始碼維護於獨立的
 [visionnaire-flutter](https://github.com/yihong1120/visionnaire-flutter)。
 本儲存庫的 `frontend/web/` 存放 Git 忽略的前端建置產物。版本發布與前後端介面請參閱
-[frontend/README.md](frontend/README.md)。
+[前端交付說明](frontend/README-zh-tw.md)。
 
 ## 建議執行方式
 
@@ -196,41 +196,41 @@ Flutter 前端原始碼維護於獨立的
 串流程序支援 Rust／PyO3 後端，用於中心點追蹤、防護裝備判斷，以及人員與機具或車輛
 的距離判斷。串流 Docker 映像內含 wheel。在主機執行時可自行建置安裝。
 `POSTPROCESS_BACKEND` 可選 `auto`（預設）、`python` 或 `rust`，變更後重啟程序。
-建置方式、適用範圍與量測結果見 [Rust 後處理說明](bindings/python/postprocess/README.md)。
+建置方式、適用範圍與量測結果見 [Rust 後處理說明](bindings/python/postprocess/README-zh-tw.md)。
 
 共用 YOLO 工作者也支援 Rust TensorRT 後端，可沿用通過模型目錄與 SHA256
 驗證且版本相容的 INT8 引擎。`YOLO_WORKER_BACKEND=auto|rust|python` 控制
 推論後端，支援多鏡頭共享記憶體、批次與獨立回覆佇列。
-32 路模擬來源的整合測試、建置及版本條件見 [Rust GPU 工作者](native/inference/README.md)。
+32 路模擬來源的整合測試、建置及版本條件見 [Rust GPU 工作者](native/inference/README-zh-tw.md)。
 
 Rust 工作者可直接讀取持有租約的共享影格，省去整張影格的快照複製。幾何分析套件
-也按需載入。詳見 [影格複製減量與量測](native/inference/README.md#共享影格快照減量)。
+也按需載入。詳見 [影格複製減量與量測](native/inference/README-zh-tw.md#共享影格快照減量)。
 
 後續加入推論工作區重用、安全區域快取、Rust 最小生成樹（MST）選邊與標註混色，
-並提供明確選用的 Rust／FFmpeg 擷取後端。詳見 [串流流程優化及驗證](bindings/python/postprocess/README.md)。
+並提供明確選用的 Rust／FFmpeg 擷取後端。詳見 [串流流程優化及驗證](bindings/python/postprocess/README-zh-tw.md)。
 
 GPU 管理支援跨程序 NVENC、推論與記憶體配額，以及可選用的固定記憶體
 非同步推論。1080p 實測批次大小為 1 時約快 4%，批次大小為 8 時約慢 5%，因此非同步預設關閉。
 NVDEC → GPU 前處理／標註 → TensorRT／NVENC 已有獨立實驗路徑，但尚未通過
 既有色彩／偵測結果一致性門檻，未接入正式串流。
-詳見 [GPU 資源、非同步推論與影格實驗](native/inference/README.md#跨程序-gpu-資源與非同步推論)。
+詳見 [GPU 資源、非同步推論與影格實驗](native/inference/README-zh-tw.md#跨程序-gpu-資源與非同步推論)。
 
 ## 快速開始
 
 ### 1. 準備 Python
 
 `main.py` 與 API 服務使用 Python `>=3.15,<3.16`，並採用 PEP 810 明確延遲匯入。
-使用下列指令可安裝共用 API 的執行環境。
+Python 相依套件與選用群組宣告在 [pyproject.toml](pyproject.toml)，Linux x86_64
+的解析版本記錄在 [uv.lock](uv.lock)。從專案根目錄執行下列指令，將共用 API 安裝到專案的 `.venv`。
 
 ```bash
 uv sync --locked
 ```
 
-Python 3.15 的完整訓練與 INT8 TensorRT 匯出，請在目標環境執行：
+需要訓練與 INT8 TensorRT 匯出時，請用同一個環境的 Python 執行建置程式。
 
 ```bash
-conda activate construction_env
-python deploy/python315/bootstrap.py
+.venv/bin/python deploy/python315/bootstrap.py
 ```
 
 此流程使用 PyTorch 官方 CUDA 13.0 的 CPython 3.15 wheel，並從鎖定的上游
@@ -243,8 +243,12 @@ python deploy/python315/bootstrap.py
 請在新主機執行上述流程以取得這些原生套件。
 
 不需要 TensorRT／CUDA 標頭的 CPU 校正、開發與測試環境，改執行
-`python deploy/python315/bootstrap.py --cpu-only`。建置指令會在鎖定的套件庫相依項目
+`.venv/bin/python deploy/python315/bootstrap.py --cpu-only`。建置指令會在鎖定的套件庫相依項目
 之外安裝指定版本的原生套件。CI 使用 CPU 流程，GPU Docker 基底映像則在映像內建置 wheel。
+建置後使用 `uv run --no-sync` 執行程式，以保留這些本機 wheel。
+
+若其他工具需要 pip 格式的套件清單，可按需匯出。例如
+`uv export --locked --no-emit-project --extra training -o /tmp/requirements.txt` 會產生包含訓練套件的清單。
 
 Python 3.15 的 `examples/YOLO_train/export_int8_trt.py` 與 `export_int8_engine.py` 使用 ONNX Runtime
 CPU 校正產生 INT8 Q/DQ 圖，再交由 TensorRT 建置及執行 GPU 引擎。此流程支援
@@ -256,9 +260,9 @@ CPU 校正產生 INT8 Q/DQ 圖，再交由 TensorRT 建置及執行 GPU 引擎�
 `--extra yolo-gpu`。
 
 
-多平台通知工具使用 `uv sync --extra social-notifications`，搭配 MCP 時使用
-`uv sync --extra mcp --extra social-notifications`。訓練、評估與資料增強使用
-`uv sync --extra training` 安裝套件庫提供的訓練相依套件。原生校正與匯出所需套件
+多平台通知工具使用 `uv sync --locked --extra social-notifications`，搭配 MCP 時使用
+`uv sync --locked --extra mcp --extra social-notifications`。訓練、評估與資料增強使用
+`uv sync --locked --extra training` 安裝套件庫提供的訓練相依套件。原生校正與匯出所需套件
 由上述建置流程提供。
 
 選用的推論與通知相依，統一以模組頂層 `lazy import` 宣告。
@@ -274,8 +278,8 @@ hf download yihong1120/Construction-Hazard-Detection \
   --local-dir .
 ```
 
-工作者載入的模型檔名格式為 `models/pt/best_<model_key>.pt`，例如
-`models/pt/best_yolo26n.pt`。
+工作者依串流的 `model_key` 從已發布的模型目錄查出權重檔與 SHA-256。
+下載 `models/pt/best_yolo26n.pt` 等檔案後，仍須在模型目錄發布才能選用。
 
 ### 3. 建立 `.env`
 
@@ -310,7 +314,7 @@ YOLO_WORKER_RING_SLOT_CLEANUP_SECONDS=120
 YOLO_WORKER_BATCH_SIZE=8
 YOLO_WORKER_BATCH_WAIT_MS=10
 YOLO_WORKER_PRECISION=f16
-# f32/f16 使用 models/pt/*.pt，int8 使用 models/int8_engine/*.engine。
+# 使用 INT8 時，YOLO_WORKER_ARTIFACT_MANIFEST 將已發布的權重對應至引擎檔。
 
 # 每台攝影機各有一個容量有限的共享記憶體影格環形緩衝區及專用結果佇列。
 # Docker 的 YOLO_WORKER_SHM_SIZE 至少應涵蓋
@@ -660,7 +664,7 @@ YOLO 工作者分組異常重啟時，會建立新一代程序間通訊（IPC）
 環境設定按用途整理為具型別的模型。用戶端與工作者在各自的生命週期中會使用已驗證的
 設定快照。明確指定的建構參數優先於環境變數，例如可以用空字串覆寫環境變數設定的 Redis
 密碼。無效數值、布林值及 MCP 傳輸設定會在載入時報錯。生命週期、憑證更新與驗證規則
-見[設定管理說明](src/settings/README.md)。
+見[設定管理說明](src/settings/README-zh-tw.md)。
 
 ## 授權
 

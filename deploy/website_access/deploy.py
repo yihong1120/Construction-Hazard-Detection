@@ -127,6 +127,8 @@ def main():
         'deploy.py', 'agent.py', 'snapshot.py', 'migrate.py',
         'migration.sql', 'README.md',
     })
+    if (BASE / 'README-zh-tw.md').is_file():
+        required.add('README-zh-tw.md')
     if set(checksums) != required:
         raise RuntimeError('Unexpected bundle manifest')
     for name, expected in checksums.items():

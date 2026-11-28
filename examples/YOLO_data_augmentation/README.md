@@ -1,4 +1,4 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
 # YOLO Data Augmentation
 
@@ -14,9 +14,9 @@ dataset/
 
 ## Dependencies
 
-From the repository root, run `uv sync --extra training`. Add `--extra yolo-gpu`
-for TensorRT export. Commands below use `uv run --no-sync python` to preserve
-the installed optional dependencies.
+From the repository root, run `uv sync --locked --extra training`. For TensorRT
+export on CPython 3.15, follow the [native wheel setup](../../README.md#1-prepare-python).
+Use `uv run --no-sync python` afterwards to retain those wheels.
 
 ## Scripts
 

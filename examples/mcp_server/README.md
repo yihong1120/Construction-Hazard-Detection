@@ -1,6 +1,6 @@
-# Construction Hazard Detection MCP
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-[English](README.md) | [繁體中文](README-zh-tw.md)
+# Construction Hazard Detection MCP
 
 This optional MCP entry point exposes detection, violation records, models and multi-platform
 notifications to AI clients. It uses existing APIs, OIDC identities and site permissions.
@@ -10,12 +10,12 @@ notifications to AI clients. It uses existing APIs, OIDC identities and site per
 From the repository root:
 
 ```bash
-uv sync --extra mcp
+uv sync --locked --extra mcp
 MCP_TRANSPORT=stdio uv run --no-sync python -m examples.mcp_server.main
 ```
 
 Queries, uploads, FCM, model downloads and geometry tools need no GPU or image packages.
-For local inference and hazard analysis, use `uv sync --extra mcp --extra yolo`.
+For local inference and hazard analysis, use `uv sync --locked --extra mcp --extra yolo`.
 Frame capture requires the `streaming` or `yolo` extra. Heavy libraries load only when used.
 
 ```bash
@@ -84,7 +84,7 @@ connection pools, which close on shutdown even when the transport task group is 
 
 Inference accepts `image_base64` and optional `model_key`, `use_ultralytics`,
 `movement_thr`. Repeated settings reuse the detector; changed settings close and
-replace it. Access to the shared tracker is serialized.
+replace it. Access to the shared tracker is serialised.
 
 Hazard analysis accepts rows with at least six values `[x1,y1,x2,y2,confidence,class_id]`
 or objects with `bbox`/`box`, `confidence`/`conf`, `class_`/`cls`. Per-call
@@ -101,10 +101,10 @@ There are no demo successes, invented site/camera identities or placeholder stat
 Frame capture returns JPEG `base64` or an `array`. Opening and reading each have
 10-second timeouts. Capture runs off the event loop and always releases resources.
 Continuous detection belongs to the existing `main.py` worker; the unsupported
-stream control tools were removed. Image URLs still require API Bearer authorization;
+stream control tools were removed. Image URLs still require API Bearer authorisation;
 use `as_base64=true` to retrieve image content through the tool.
 
-Install `uv sync --extra mcp --extra social-notifications` for all notification
+Install `uv sync --locked --extra mcp --extra social-notifications` for all notification
 channels. Platform SDKs and image libraries load only on related tool calls;
 see `.env.example` for credentials. FCM uses the OIDC worker identity; other
 platforms use their own tokens/secrets. An unconfigured platform fails when called

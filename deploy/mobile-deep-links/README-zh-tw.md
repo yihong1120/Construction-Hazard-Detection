@@ -1,20 +1,24 @@
-# Mobile deep links for password reset
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
+# 密碼重設的行動裝置深層連結
+
+請將範例中的網域、位址與識別碼替換成自己部署環境的值。
 
 目標是讓同一條正式 HTTPS reset link：
 
 ```text
-https://changdar-server.mooo.com/reset_password?token={raw_reset_token}
+https://app.example.org/reset_password?token={raw_reset_token}
 ```
 
 在 iOS / Android 已安裝 app 時開啟 app，沒有安裝 app 或桌面瀏覽器時回到
 Flutter Web 的 `index.html`。
 
-## iOS Universal Links
+## iOS 通用連結（Universal Links）
 
 伺服器必須提供：
 
 ```text
-https://changdar-server.mooo.com/.well-known/apple-app-site-association
+https://app.example.org/.well-known/apple-app-site-association
 ```
 
 注意：
@@ -24,14 +28,14 @@ https://changdar-server.mooo.com/.well-known/apple-app-site-association
 - 不要 redirect
 - `appIDs` 必須是 `APPLE_TEAM_ID.BUNDLE_ID`
 - iOS app 也要開啟 Associated Domains：
-  `applinks:changdar-server.mooo.com`
+  `applinks:app.example.org`
 
-正式檔已放在 `.well-known/apple-app-site-association`，內容使用：
+請依部署環境填寫 `.well-known/apple-app-site-association`，以下為範例格式。
 
 ```text
-APPLE_TEAM_ID=5DU8R27949
-IOS_BUNDLE_ID=com.changdar.visionnaire
-appID=5DU8R27949.com.changdar.visionnaire
+APPLE_TEAM_ID=YOURTEAMID
+IOS_BUNDLE_ID=com.example.visionnaire
+appID=YOURTEAMID.com.example.visionnaire
 ```
 
 部署到：
@@ -40,12 +44,12 @@ appID=5DU8R27949.com.changdar.visionnaire
 /.well-known/apple-app-site-association
 ```
 
-## Android App Links
+## Android 應用程式連結（App Links）
 
 伺服器必須提供：
 
 ```text
-https://changdar-server.mooo.com/.well-known/assetlinks.json
+https://app.example.org/.well-known/assetlinks.json
 ```
 
 注意：
@@ -54,14 +58,14 @@ https://changdar-server.mooo.com/.well-known/assetlinks.json
 - `package_name` 必須是 Android app 的正式 package
 - `sha256_cert_fingerprints` 必須是正式簽章憑證 SHA-256 fingerprint
 - Android app manifest 的 intent filter 需包含
-  `android:autoVerify="true"`、host `changdar-server.mooo.com`、pathPrefix
+  `android:autoVerify="true"`、host `app.example.org`、pathPrefix
   `/reset_password`
 
-正式檔已放在 `.well-known/assetlinks.json`，內容使用：
+請依部署環境填寫 `.well-known/assetlinks.json`，以下為範例格式。
 
 ```text
-ANDROID_PACKAGE_NAME=com.changdar.visionnaire
-ANDROID_SIGNING_CERT_SHA256_FINGERPRINT=5E:79:A5:EE:8A:0E:28:91:CF:EF:B1:86:F6:E3:F1:2D:3A:D7:AD:49:24:0D:74:07:73:7B:56:98:B9:78:C8:85
+ANDROID_PACKAGE_NAME=com.example.visionnaire
+ANDROID_SIGNING_CERT_SHA256_FINGERPRINT=<release-certificate-sha256>
 ```
 
 部署到：
@@ -70,7 +74,7 @@ ANDROID_SIGNING_CERT_SHA256_FINGERPRINT=5E:79:A5:EE:8A:0E:28:91:CF:EF:B1:86:F6:E
 /.well-known/assetlinks.json
 ```
 
-## Web fallback
+## 未開啟原生應用程式時的網頁
 
 Nginx 需要確保：
 
@@ -82,7 +86,7 @@ Nginx 需要確保：
 `location / { try_files ... /index.html; }` 已涵蓋此路徑，不需要額外建立
 `location = /reset_password`。可參考 `nginx.mobile-deep-links.conf`。
 
-## Email reset link
+## 電子郵件中的密碼重設連結
 
 後端目前會使用：
 
@@ -93,13 +97,13 @@ APP_PUBLIC_URL/reset_password?token={raw_reset_token}
 正式環境請設定：
 
 ```dotenv
-APP_PUBLIC_URL=https://changdar-server.mooo.com
+APP_PUBLIC_URL=https://app.example.org
 ```
 
 因此 email 會收到統一網址：
 
 ```text
-https://changdar-server.mooo.com/reset_password?token={raw_reset_token}
+https://app.example.org/reset_password?token={raw_reset_token}
 ```
 
 手機 OS 會根據 Universal Links / App Links 驗證結果決定是否開啟 app。

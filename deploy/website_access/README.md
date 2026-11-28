@@ -1,109 +1,59 @@
-# 網站 IP 存取管理
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-此功能與工地 `Site` 分開管理。全站管理員可管理 `main`、`ai`、`wiki`
-的 IPv4／IPv6 地址與 CIDR，普通使用者與群組管理員不可變更全站網路邊界。
-`GET /admin/capabilities` 的 `can_manage_website_access` 控制前端管理選單。
+# Website IP access management
 
-所有 Web 呼叫經既有 BFF session 與 CSRF 保護：
-`/bff/db_management/admin/website-access`。原生 API 使用既有 OIDC Bearer
-驗證。不可把 API bearer token 存進瀏覽器。
+Replace the example domains, addresses and identifiers with the values for your deployment.
 
-Flutter 原生 App 在 B 使用
-`https://changdar-server.mooo.com/hazard/api/db_management/admin/website-access`
-作為 API 基底路徑，並在每個請求帶 `Authorization: Bearer <access_token>`。
-`GET` 基底路徑的 JSON 根節點是**陣列**，恰有 `main`、`ai`、`wiki` 三筆；
-每筆含 `site_key`、`hostname`、`restricted`、`version`、`updated_at`、
-`rules`。不要把它解析成 `{ "policies": [...] }`。`GET /context` 回傳
-`{ "client_ip": "...", "can_manage_website_access": true }`；
-`GET /gateway` 回傳 `online`、`checked_at`、`versions`。若 API 回 200 而
-畫面仍說沒有網站政策，先記錄狀態碼與 JSON 形狀，再檢查 App 的解析模型。
+Website IP policies are managed separately from construction `Site` records. Global administrators can manage IPv4/IPv6 addresses and CIDR ranges for `main`, `ai` and `wiki`. Ordinary users and group administrators cannot change the network boundary for the websites. The frontend uses `can_manage_website_access` in `GET /admin/capabilities` to display its management menu.
 
-| 方法 | API 路徑（相對於 `/admin/website-access`） | 用途 |
+Web calls use the existing BFF session and CSRF protection at `/bff/db_management/admin/website-access`. Native API calls use the existing OIDC Bearer authentication. Never store an API bearer token in the browser.
+
+For a deployment at `app.example.org`, the native Flutter app uses `https://app.example.org/hazard/api/db_management/admin/website-access` as the base URL and sends `Authorization: Bearer <access_token>` with every request. GET on the base URL returns a JSON **array** containing exactly three entries, `main`, `ai` and `wiki`. Each contains `site_key`, `hostname`, `restricted`, `version`, `updated_at` and `rules`. Parse the array directly, without a `{ "policies": [...] }` wrapper. `GET /context` returns `{ "client_ip": "...", "can_manage_website_access": true }`. `GET /gateway` returns `online`, `checked_at` and `versions`. If the API returns 200 but the screen reports no policies, record the status code and JSON shape before checking the app's response model.
+
+| Method | API path relative to `/admin/website-access` | Purpose |
 | --- | --- | --- |
-| GET | 空路徑 | 列出三個網站、規則及版本 |
-| GET | `/context` | 顯示服務實際看到的來源 IP |
-| GET | `/gateway` | 檢查 Nginx 同步程序及已套用版本 |
-| PUT | `/{site_key}` | 開啟或關閉限制 |
-| POST | `/{site_key}/rules` | 新增 IP／網段與名稱 |
-| PUT | `/{site_key}/rules/{uuid}` | 編輯 IP／名稱／啟用狀態 |
-| DELETE | `/{site_key}/rules/{uuid}?expected_version=N` | 刪除規則 |
-| GET | `/audit?site_key=ai&limit=50` | 查看變更紀錄（最多 200 筆） |
+| GET | Empty path | List the three websites with their rules and versions |
+| GET | `/context` | Show the source IP observed by the service |
+| GET | `/gateway` | Check the Nginx synchronisation service and the applied versions |
+| PUT | `/{site_key}` | Enable or disable restrictions |
+| POST | `/{site_key}/rules` | Add a named IP address or network |
+| PUT | `/{site_key}/rules/{uuid}` | Edit the address, name or enabled status |
+| DELETE | `/{site_key}/rules/{uuid}?expected_version=N` | Delete a rule |
+| GET | `/audit?site_key=ai&limit=50` | View changes, up to 200 entries |
 
-新增／編輯使用完整內容，例如：
+Supply the complete payload when creating or editing a rule.
 
 ```json
-{"network":"60.249.248.158","label":"公司出口／VPN","enabled":true,"expected_version":0}
+{"network":"192.0.2.10","label":"Company exit / VPN","enabled":true,"expected_version":0}
 ```
 
-規則回應會將單一 IP 正規化為 `/32` 或 `/128`。每次操作回傳完整網站政策與
-新的 `version`；下次變更帶入 `expected_version`，版本衝突回 409，須重讀。
-開啟限制使用 `{"restricted":true,"expected_version":1}`。
-新政策預設 unrestricted，新增 IP 不會自動開啟限制。最多 256 筆／網站。
+Rule responses normalise single IP addresses to `/32` or `/128`. Each operation returns the full website policy and new `version`. Supply it as `expected_version` on the next change. On a 409 version conflict, fetch the policy again. Enable restrictions with `{"restricted":true,"expected_version":1}`. New policies are unrestricted. Adding an IP does not automatically enable restrictions. Each website supports up to 256 rules.
 
-啟用、修改、停用或刪除規則後，若目前管理員的來源 IP 不在有效白名單中，
-交易回滾並回 `website_access_would_lock_you_out`。禁止空白名單與 `/0`；
-完全開放請關閉 restricted。所有變更與 before/after 稽核紀錄在同一交易提交。
-來源 IP 取自 ASGI client，不接受表單或任意 forwarded header 指定來源 IP。
+If enabling, changing, disabling or deleting a rule would leave the current administrator's source IP outside the effective allowlist, the transaction rolls back with `website_access_would_lock_you_out`. Empty allowlists and `/0` are prohibited. To allow all traffic, disable restrictions. All changes and their before/after audit entries commit together. The source IP comes from the ASGI client. Forms and arbitrary forwarding headers cannot specify it.
 
-防止自己被鎖出的檢查只在儲存設定時執行，不會替管理員增加白名單或豁免。
-限制啟用且入口已套用後，所有角色都遵守相同規則；已登入的全站管理員若改用
-白名單外的網路，其新 HTTP 請求同樣回 403，既有登入 session 不會繞過限制。
+The lockout check runs when saving a policy and does not add administrators to an allowlist or exempt them. Once restrictions are enabled and applied at the gateway, every role follows the same rules. Even a signed-in global administrator receives 403 on new HTTP requests from an unlisted network.
 
-## 入口執行機制
+## How the gateway enforces policies
 
-`snapshot.py` 以應用程式帳號在 PostgreSQL READ ONLY／REPEATABLE READ 交易中
-匯出完整政策。獨立 root 同步程序只接受三個已知網站、布林值及 numeric CIDR，
-不將名稱或其他資料庫文字寫入 Nginx。每 5 秒更新 `geo` 白名單；通過 `nginx -t`
-後才 reload，失敗保留上次成功設定。API 儲存成功與 Nginx 套用成功分開呈現，
-前端比較 `/gateway` 的 `versions[site_key]` 與政策 `version`，且 `online=true`
-才顯示「已套用」。資料庫或同步程序中斷時，Nginx 繼續執行上次成功的規則。
+Using the application account, `snapshot.py` exports all policies in a PostgreSQL READ ONLY, REPEATABLE READ transaction. The independent root synchronisation service accepts only the three known websites, booleans and numeric CIDRs. It never writes names or other database text into Nginx configuration. It updates `geo` allowlists every five seconds, reloading only after `nginx -t` passes and retaining the last successful configuration on failure. The UI distinguishes a successful API save from application at Nginx. It shows ‘Applied’ only when `online=true` and `versions[site_key]` in `/gateway` matches the policy's `version`. Nginx continues to enforce the last successful rules if the database or synchronisation service goes offline.
 
-HTTPS server 層使用 `if ($vn_website_<site>_allowed = 0) { return 403; }`，
-因此靜態檔案、API、WebSocket 握手及已有媒體 `auth_request` 的路由都受限制。
-HTTP 僅保留 ACME 驗證及 HTTPS 轉址。規則變更會影響新 HTTP 請求／握手，
-不會主動斷開已建立的 WebSocket 或串流連線。
+The HTTPS server block checks `if ($vn_website_<site>_allowed = 0) { return 403; }`, covering static files, API calls, WebSocket handshakes and routes with an existing media `auth_request`. HTTP serves only ACME challenges and HTTPS redirects. Rule changes affect new HTTP requests and handshakes. Established WebSocket and stream connections remain open.
 
-Nginx 使用真實 `$remote_addr`，應用程式只信任本機入口代理。若日後增加 CDN
-或其他反向代理，必須先配置限定可信來源的 real-IP 規則，不可直接信任客戶端
-提供的 `X-Forwarded-For`。沒有 VPN 出口轉送時，入口看到的是使用者的公網 IP；
-經公司 Exit Node 上網時才會看到公司公網 IP。
+Nginx uses the actual `$remote_addr`. The application trusts only the local gateway proxy. Before introducing a CDN or another reverse proxy, configure real-IP rules restricted to trusted sources. Never trust a client's `X-Forwarded-For` directly. The gateway sees the user's public IP for traffic outside the VPN exit route. Traffic sent through the company exit node arrives with the company's public IP.
 
-三個網站仍須通過原本 OIDC 登入與業務權限。AI、Wiki 登入依賴主網站上的
-Keycloak，因此啟用 main 限制時須確認所有需要登入的人員及後端服務可從允許
-的出口存取主網站。IPv4／IPv6 分開比對；應測試兩種連線。
+All three sites still enforce their existing OIDC login and business permissions. AI and Wiki logins depend on Keycloak on the main site. Before restricting main, make sure everyone and every backend service that needs to log in can reach it through an allowed network. Test IPv4 and IPv6 separately, as the rules match them independently.
 
-## 部署
+## Deployment
 
-1. 在 dev 資料庫先執行 `deploy/website_access/migration.sql`。
-   不在 API startup 自動執行 DDL。新資料庫也必須執行此 migration 來建立 catalog。
-2. 更新管理 API 程式並重啟。正式與 dev 使用各自資料庫。
-3. 在 repo root 執行 `python -m deploy.website_access.package <輸出目錄>`
-   產生不含憑證的部署包。傳到 B 的 `~/website-access-management/bundle/` 後，
-   先執行 `python3 ~/website-access-management/bundle/deploy.py --check`，
-   再執行 `sudo python3 ~/website-access-management/bundle/deploy.py`。
-   部署以 B 的既有 phase5 production 設定為基礎；安裝前備份
-   runtime code、Nginx 設定及新功能設定。所有既有政策須為 unrestricted，
-   入口啟用後再由管理員透過 API 加入白名單、開啟限制。
-4. 本機開發可用 `WEBSITE_ACCESS_HOSTS_JSON` 明確指定 dev 的三個 hostname；
-   同步程序 hosts 必須與管理 API 完全相同，禁止 dev 政策套用到正式入口。
+1. Run `deploy/website_access/migration.sql` against the development database first. The API does not run DDL on startup. New databases also need this migration to create the catalogue.
+2. Update and restart the management API. Production and development each use their own database.
+3. Run `python -m deploy.website_access.package <output-directory>` from the repository root to create a credential-free deployment bundle. Transfer it to `~/website-access-management/bundle/` on the gateway host. Run `python3 ~/website-access-management/bundle/deploy.py --check`, then `sudo python3 ~/website-access-management/bundle/deploy.py`. Deployment builds on the existing phase5 production gateway configuration. It backs up the runtime code, Nginx configuration and new feature configuration before installing. All existing policies must initially be unrestricted. After activating the gateway, administrators can add allowlists and enable restrictions through the API.
+4. Local development can set the three development hostnames explicitly with `WEBSITE_ACCESS_HOSTS_JSON`. The synchronisation service and management API must use exactly the same hosts. Never apply development policies to the production gateway.
 
-同步程序狀態檔預設 `/run/website-access/status.json`，管理 API 只讀取狀態。
-需要緊急解除限制時，在 B 的終端機先停止 `website-access-agent.service`，
-再將 `/etc/nginx/conf.d/website-access.conf` 的三個 geo 改為 `default 1;` 且移除
-其 CIDR 行，執行 `nginx -t` 與 reload。接著修正資料庫政策後再啟動同步程序。
+The synchronisation service writes status to `/run/website-access/status.json` by default. The management API reads it. To lift restrictions in an emergency, stop `website-access-agent.service` from the gateway host's terminal, set all three geo blocks in `/etc/nginx/conf.d/website-access.conf` to `default 1;`, remove their CIDR lines, run `nginx -t` and reload. Correct the database policies before restarting the synchronisation service.
 
-## Rust 管理 API 與同步程序
+## Rust management API and synchronisation service
 
-啟用 Rust API 的 `account_management` 後，管理路徑、政策版本、稽核紀錄和
-`/gateway` 狀態格式沿用同一套資料。由本機 Nginx 提供管理 API 時，在 Nginx
-轉送路徑以 `$remote_addr` 覆寫 `X-Real-IP`，並在 Rust API 環境設定
-`RUST_API_WEBSITE_ACCESS_TRUST_PROXY=true`。直接連線的開發環境預設使用 TCP
-對端 IP。
+Enabling `account_management` in the Rust API reuses the management routes, policy versions, audit records and `/gateway` status format. When local Nginx serves the management API, overwrite `X-Real-IP` with `$remote_addr` in the forwarding location and set `RUST_API_WEBSITE_ACCESS_TRUST_PROXY=true` for the Rust API. Direct development connections use the TCP peer address by default.
 
-Rust 發行包提供 `construction-website-access`，保留現有同步程序設定檔的
-`hosts`、`reader`、`output`、`last_good`、`status` 欄位。將 `reader` 設為由
-應用程式帳號執行 `construction-website-access snapshot`，並提供
-`RUST_API_DATABASE_URL`、實際使用的 `RUST_API_DATABASE_SCHEMA` 和網站主機設定。
-以 `construction-website-access render --config <設定檔> --snapshot <快照>` 檢查
-產出的 geo 設定，再由同步服務執行 `construction-website-access sync --config <設定檔>`。
-同步程序以既有 `last_good` 檔案為基準，通過 Nginx 語法檢查和 reload 後寫入套用版本。
+The Rust release includes `construction-website-access`, which accepts the existing synchronisation configuration fields `hosts`, `reader`, `output`, `last_good` and `status`. Configure `reader` to run `construction-website-access snapshot` as the application account. Supply `RUST_API_DATABASE_URL`, the actual `RUST_API_DATABASE_SCHEMA` and the website hosts. Check the generated geo configuration with `construction-website-access render --config <config> --snapshot <snapshot>`, then have the service run `construction-website-access sync --config <config>`. It starts from the existing `last_good` file and records the applied versions once the Nginx syntax check and reload succeed.

@@ -1,4 +1,4 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
 # YOLO Evaluation
 
@@ -8,9 +8,9 @@ model is good enough to copy into `models/pt/`.
 
 ## Dependencies
 
-From the repository root, run `uv sync --extra training`. Add `--extra yolo-gpu`
-for TensorRT export. Commands below use `uv run --no-sync python` to preserve
-the installed optional dependencies.
+From the repository root, run `uv sync --locked --extra training`. For TensorRT
+export on CPython 3.15, follow the [native wheel setup](../../README.md#1-prepare-python).
+Use `uv run --no-sync python` afterwards to retain those wheels.
 
 ## Scripts
 
@@ -50,6 +50,5 @@ than the live stream path.
 
 ## Runtime Placement
 
-Production workers load models named `best_<model_key>.pt` from `models/pt/`.
-After evaluation, copy only the selected checkpoint into that directory and set
-the matching stream `model_key` in the database management API.
+Publish the selected checkpoint in the model catalogue after evaluation. Select
+the corresponding stream `model_key` using the database management API.

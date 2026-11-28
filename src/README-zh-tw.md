@@ -1,6 +1,6 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-# Source Modules
+# 核心程式模組
 
 `src/` 是 `main.py` 使用的正式執行模組。這裡負責擷取影像、執行 YOLO 推論、
 產生安全警示、發布直播媒體、上傳違規紀錄，以及發送通知。
@@ -19,45 +19,46 @@ stream_capture.py
 
 ## 主要模組
 
-- `stream_processor.py`：攝影機 task 編排、按觀看需求發布媒體、metadata 清理與關閉流程。
-- `stream_detection.py`：影像擷取／推論 loop、警示事件與通知。
-- `stream_overlay_frames.py`：不可變 frame 與各語言 overlay 快取。
-- `stream_capture.py`：讀取 RTSP、HTTP 或本機檔案影像，避免無限制 buffering，並將
-  重連邏輯集中在影像來源附近。
-- `yolo_worker.py`：multiprocessing worker 與 client。frame 會複製到 POSIX
-  shared memory，queue 訊息只包含 metadata。worker 會載入一次 YOLO 模型，並跨攝影機
-  batching。
-- `yolo_detector.py`：stream processor 使用的偵測 facade，可呼叫本機 worker 或可選的
-  遠端 detector API。
-- `danger_detector.py`：將 detection 轉成工地安全警示與管制區 polygon。
-- `media_stream_publisher.py`：透過 ffmpeg 將 clean 或 annotated frame 發布到
-  MediaMTX。
-- `media_restreamer.py`：不等待偵測，直接將原始來源 stream 轉發到 MediaMTX。
-- `violation_sender.py`：上傳違規圖片與 metadata 到 violation records API。
+- `stream_processor.py`：協調單一攝影機的工作，依觀看需求發布影像，並負責清理中繼資料和關閉資源。
+- `stream_detection.py`：執行擷取與推論迴圈，產生警示事件及通知。
+- `stream_overlay_frames.py`：管理唯讀影格與各語言的疊圖快取。
+- `stream_capture.py`：從 RTSP、HTTP 或本機檔案擷取影格，限制緩衝量並處理來源重連。
+- `yolo_worker.py`：提供跨程序的工作者與用戶端。影格存入 POSIX 共享記憶體，佇列只傳遞中繼資料。工作者載入一次模型，即可跨攝影機進行批次辨識。
+- `yolo_detector.py`：提供串流處理程序使用的辨識介面，將影格送至共用 YOLO 工作者並追蹤辨識結果。
+- `danger_detector.py`：將辨識結果轉成工地安全警示與管制區域的多邊形。
+- `media_stream_publisher.py`：透過 FFmpeg 將原始影像或標註後的影像發布到 MediaMTX。
+- `media_restreamer.py`：將來源串流直接轉送到 MediaMTX，無須等待辨識完成。
+- `violation_sender.py`：將違規圖片及中繼資料上傳至違規紀錄 API。
 
-## 工具模組
+## 共用工具
 
-- `utils.py`：token、Redis、幾何、編碼與共用 helper。
-- `warning_types.py`：警示 payload type aliases。
-- `model_fetcher.py`：模型下載與更新 helper。
-- `monitor_logger.py`：logging 設定。
-- `stream_viewer.py`：手動 OpenCV stream viewer，用於診斷。
+- `utils.py`：權杖、Redis、幾何運算、編碼等共用工具。
+- `warning_types.py`：警示資料的型別。
+- `model_fetcher.py`：模型下載與更新。
+- `monitor_logger.py`：日誌設定。
+- `stream_viewer.py`：用於人工檢查串流的 OpenCV 檢視器。
 
-## 通知 Adapter
+## 通知服務
 
-`notifiers/` 保留 FCM、LINE Messaging API、Messenger、Telegram、WeChat 與
-HTTP broadcast adapter。FCM 使用具 OIDC 驗證機制的 backend，其他平台使用各自憑證；
-偵測與違規判斷留在 `stream_detection.py`。
+`notifiers/` 支援 FCM、LINE Messaging API、Messenger、Telegram、WeChat 與 HTTP 廣播。FCM 使用經 OIDC 驗證的後端，其他平台使用各自的憑證。偵測與違規判斷由 `stream_detection.py` 處理。
 
-多平台通知安裝 `uv sync --extra social-notifications`。可直接呼叫 adapter，
-或透過 MCP 的通知工具使用；目前攝影機 worker 的既有通知流程使用 FCM。
-LINE 的設定請參閱[Messaging API 指南](../docs/zh/line_notify_guide_zh.md)。
+執行 `uv sync --locked --extra social-notifications` 即可安裝多平台通知套件。可以直接呼叫通知服務，也可以透過 MCP 通知工具使用。攝影機工作程序使用 FCM。LINE 的設定請參閱 [Messaging API 指南](../docs/zh/line_notify_guide_zh.md)。
 
 ## 執行注意事項
 
-- Redis 不是 video frame store，只用於 compact metadata、auth cache、notification
-  token cache 與 overlay coordination。
-- MediaMTX 負責 live HLS/WebRTC playback。
-- YOLO worker queue size 會限制尚未完成的 inference request 數量。queue 滿時，caller
-  會 timeout 或略過過舊工作，避免記憶體無限制成長。
-- frame copy 應盡量只出現在 capture、shared memory 與 ffmpeg 邊界。
+- Redis 保存精簡的中繼資料、驗證快取、通知權杖快取及疊圖的協調狀態。
+- MediaMTX 提供 HLS 與 WebRTC 直播。
+- YOLO 工作者的佇列限制等待中的推論請求數。佇列已滿時，呼叫端會逾時或略過過期工作，以控制記憶體用量。
+- 只在擷取、共享記憶體與 FFmpeg 交接時複製影格。
+
+## 背景工作程序的身分驗證
+
+`main.py` 會先確認 Redis 可用，再啟動攝影機和 GPU 程序。請將 `REDIS_PASSWORD` 設為伺服器密碼。Redis 在建立連線時驗證，後續讀寫沿用該連線。
+
+工作程序使用 `WORKER_OIDC_CLIENT_ID` 與 `WORKER_OIDC_CLIENT_SECRET`，透過用戶端憑證取得並更新權杖。將 `WORKER_OIDC_TOKEN_ENDPOINT` 設為 realm 的權杖端點，或提供 `OIDC_ISSUER_URL`。除了本機迴送位址，端點一律使用 HTTPS。
+
+每個租戶的工作程序使用各自的 Keycloak 機密用戶端。啟用用戶端驗證及服務帳號，關閉瀏覽器登入與直接密碼流程，並透過 audience mapper 加入 API 的 audience（通常是 `visionnaire-api`）。請為工作程序單獨配置用戶端，與 BFF、帳號連結工具分開。
+
+將服務帳號的 Keycloak 使用者 ID（權杖中的 `sub`）透過 `UserIdentity` 連結至啟用中的本機工作帳號，並使用設定的身分提供者（通常是 `keycloak`）。依工作需求指派租戶、工地、群組與功能權限。驗證沿用 API 的授權規則，無須 realm 管理員角色。缺少本機身分對應時，即使持有用戶端密鑰也無法通過授權。既有 realm 須明確建立此用戶端，重新匯入 realm 不會更新既有用戶端。密鑰僅存放在執行環境。
+
+成功取得權杖只能確認用戶端設定有效。完成身分連結後，應向目標 API 發出一次請求來驗證權限。Redis 連線失敗或缺少工作程序憑證時，啟動流程會在建立攝影機程序前停止。

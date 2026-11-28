@@ -1,40 +1,28 @@
-# Python／Rust 對照實驗
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-本目錄是可重現的效能實驗，基準程式使用本 repo 的 `YoloDetector` 預設 centroid
-追蹤器與 `DangerDetector`。Rust 版本保留同樣的匹配順序、門檻、track ID、駕駛排除、
-空間索引與警示輸出。實驗會產生逐格紀錄、每輪摘要及輸入雜湊。
+# Python and Rust benchmark
 
-## 比較範圍
+This reproducible experiment uses the project's default centroid tracker in `YoloDetector` and hazard rules in `DangerDetector` as its baseline. The Rust version preserves matching order, thresholds, track IDs, driver exclusions, spatial indexing and alert output. Each run records per-frame results, round summaries and input hashes.
 
-- 真實輸入：`tests/videos/test.mp4` 中每隔 18 格取樣，共 48 格；另加
-  `tests/cv_dataset/images` 的 10 張圖片。YOLO26n、640×640、FP32、batch=1、
-  confidence=0.25。16 個預處理張量另用於推論對照。
-- 規則：未戴安全帽、未穿背心、人員接近機具／車輛，包含駕駛排除。
-- 不包含交通錐／電線桿多邊形、Hungarian tracker、攝影機連線、影像解碼與前處理、
-  標註繪圖、編碼、MediaMTX、Redis／PostgreSQL、outbox 與通知。
-- 16／64／256 個物件的資料是有固定亂數種子的合成壓力測試，不代表實際攝影機負載。
-- 模型推論兩邊使用相同的 ONNX、相同版本 ONNX Runtime 及同一個共享函式庫檔案。
-  CPU 與 CUDA 可使用不同的 Python 環境，搭配各自載入的 ORT runtime。
+## Scope
 
-## 計時方法
+- The real dataset contains 48 frames sampled every 18 frames from `tests/videos/test.mp4` and 10 images from `tests/cv_dataset/images`. It uses YOLO26n, 640×640, FP32, batch 1 and a confidence threshold of 0.25. A separate inference comparison uses 16 preprocessed tensors.
+- The rules cover missing helmets, missing safety vests and people near machinery or vehicles, including the driver exclusion.
+- The timings exclude cone and utility-pole polygons, the Hungarian tracker, camera connections, decoding and preprocessing, overlay drawing, encoding, MediaMTX, Redis/PostgreSQL, the outbox and notifications.
+- Seeded synthetic cases with 16, 64 and 256 objects test how processing scales under load. They do not estimate the load of a live camera.
+- Both inference implementations use the same ONNX model, ONNX Runtime version and shared library file. CPU and CUDA may use separate Python environments with their respective ORT runtimes.
 
-Rust 使用 `cargo build --release --locked`。每種設定執行 7 輪，Python／Rust
-輪流先跑，皆固定在同一個 Intel P-core、單一 ORT 計算執行緒。輸入讀檔、模型載入、
-暖機、JSON 讀寫與 tracker 重建不計入處理時間；逐格結果配置、警示建構與回收則計入。
+## Timing
 
-`results.json` 中每一輪的毫秒值為該輪處理總時間／影格數；`median_paired_speedup`
-為同輪 Python／Rust 比值的中位數，`paired_speedup_range` 為 7 輪的最小／最大值，
-**不是統計信賴區間**。P95 是每輪逐格耗時的 95 百分位，再取各輪中位數。
+Build Rust with `cargo build --release --locked`. Each configuration runs seven rounds, alternating which implementation goes first, pinned to the same Intel P-core with one ORT compute thread. Timings include per-frame result allocation, alert construction and deallocation. Reading input, loading the model, warming up, reading/writing JSON and rebuilding the tracker happen outside the timed interval.
 
-GPU 原有工作負載保留；每次 CUDA 量測前後都保存 `nvidia-smi` 狀態。這不是獨占 GPU
-實驗，幾個百分點的差異應視為可能的負載／時脈波動，不應直接宣稱 Rust 加速。
-`peak_rss_kib` 包含初始化、輸入載入及依賴，不是完整伺服器的常駐記憶體比較。
+Each round's millisecond value in `results.json` is the elapsed processing time divided by the number of frames. `median_paired_speedup` is the median of the within-round Python/Rust ratios. `paired_speedup_range` gives the minimum and maximum of the seven ratios. These endpoints are **not a statistical confidence interval**. P95 is the median across rounds of the 95th percentile of per-frame times.
 
-## 重現
+Existing GPU workloads continue running. Each CUDA measurement records `nvidia-smi` before and after, so differences of a few per cent may reflect other workloads or clock changes. `peak_rss_kib` includes initialisation, input loading and dependencies. It measures the benchmark process rather than a complete running server.
 
-使用 Linux、Rust ≥1.92、ONNX Runtime 1.31.0 的 CPU 與 CUDA runtime，以及具有
-NumPy、OpenCV、scikit-learn、Shapely 與 ORT Python bindings 的環境。`--core` 指定測試程序可用的邏輯 CPU。
-CPU 使用目前的 Python。若 CUDA bindings 安裝於另一個環境，設定 `CHD_BENCH_GPU_PYTHON`；以隔離套件目錄提供 bindings 時，可設定 `CHD_BENCH_GPU_SITE`。
+## Reproducing the experiment
+
+Use Linux, Rust ≥1.92, ONNX Runtime 1.31.0 CPU and CUDA runtimes, and Python environments with NumPy, OpenCV, scikit-learn, Shapely and ORT bindings. `--core` selects a logical CPU available to the test process. The CPU benchmark uses the current Python interpreter. Set `CHD_BENCH_GPU_PYTHON` if CUDA bindings are installed in a different environment, or `CHD_BENCH_GPU_SITE` for bindings supplied in an isolated package directory.
 
 ```bash
 cargo build --release --locked --manifest-path experiments/rust_benchmark/Cargo.toml
@@ -44,7 +32,7 @@ export CHD_BENCH_GPU_ORT=/path/to/cuda/libonnxruntime.so.1.31.0
 export CHD_BENCH_GPU_PYTHON=/path/to/gpu-python/bin/python
 export LD_LIBRARY_PATH="/path/to/cuda/lib:/path/to/cudnn/lib:${LD_LIBRARY_PATH:-}"
 
-# 使用具有 NumPy、OpenCV、scikit-learn、Shapely、ORT 的 Python 3.15。
+# Use Python 3.15 with NumPy, OpenCV, scikit-learn, Shapely and ORT.
 PYTHON_DOTENV_DISABLED=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   python experiments/rust_benchmark/benchmark.py prepare
 
@@ -52,11 +40,6 @@ PYTHON_DOTENV_DISABLED=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   python experiments/rust_benchmark/run_experiment.py --core 4 --rounds 7
 ```
 
-`prepare` 使用本機測試影片與圖片，不會讀取 `.env` 的攝影機或連線正式資料庫。
-模型 `models/pt/best_yolo26n.onnx` 不在 Git 中，須先準備；本次模型與原始碼的 SHA256
-保存在 manifest。預設會先比較每一格完整的追蹤／警示內容，再比較 CPU 與 CUDA 的
-完整原始推論輸出；任一項不一致便停止量測。
+`prepare` uses local test video and images without reading cameras from `.env` or connecting to the production database. Supply `models/pt/best_yolo26n.onnx` separately. The manifest records the model and source SHA-256 hashes. By default, the benchmark compares every frame's tracking and alerts and the complete raw CPU and CUDA inference outputs for each implementation. A mismatch stops timing.
 
-原始逐格時間、輸出、環境資訊與 GPU 狀態保存在 `data/`，摘要寫入 `results.json`。可用
-`--verify-only` 只做正確性檢查。基準程式用原始 Python class definition 執行追蹤器，
-以避開 3.14 無法解析模組頂層 PEP 810 lazy import 的限制；追蹤器本身沒有重寫。
+Raw per-frame timings, output, environment information and GPU state are stored in `data/`. The summary is written to `results.json`. Use `--verify-only` for correctness checks alone. The benchmark runs the original Python class definition to avoid parsing the module's top-level PEP 810 lazy import with Python 3.14. It uses the original tracker implementation.

@@ -1,18 +1,20 @@
-# 攝影機完整流程比較
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-在同一台主機依序執行三種攝影機處理流程。三組共用 YOLO26n INT8 engine、640 輸入尺寸、batch 上限 8、2 ms batch 等待、RTSP 來源和警報規則。
+# End-to-end camera pipeline benchmark
 
-| 方案 | 流程 |
+Run three camera pipelines sequentially on the same host. All three use the same YOLO26n INT8 engine, an input size of 640, a maximum batch size of 8, a 2 ms batch wait, RTSP sources and hazard rules.
+
+| Variant | Pipeline |
 | --- | --- |
-| `python` | `main.py`，Python TensorRT worker 與 Python 後處理 |
-| `hybrid` | `main.py`，Rust TensorRT worker 與 Rust 後處理 |
-| `rust` | 獨立 `construction-pipeline`，單一程序管理擷取、推論、分析、輸出和 outbox |
+| `python` | `main.py` with a Python TensorRT worker and Python postprocessing |
+| `hybrid` | `main.py` with a Rust TensorRT worker and Rust postprocessing |
+| `rust` | Standalone `construction-pipeline`, managing capture, inference, analysis, output and the outbox in one process |
 
-Python 兩組由 `legacy.py` 加入危險判定 trace，並將 OpenCV 和解碼執行緒各限制為 1。Rust 使用 `record_detections` 記錄相同處理邊界。測試輸出採 libx264、ultrafast、CRF 23、單執行緒及兩秒 GOP，預設 15 FPS。Python 的 clean 和 annotated 輸出共用擷取影格，FFmpeg 子程序由測試 wrapper 套用輸出參數。獨立 Rust 在程序內呼叫 libav。
+For both Python variants, `legacy.py` adds hazard-decision tracing and limits OpenCV and the decoder to one thread each. Rust uses `record_detections` to trace the equivalent point. Test outputs use libx264, the ultrafast preset, CRF 23, one thread and a two-second GOP, at 15 FPS by default. Python shares captured frames between clean and annotated outputs. A wrapper supplies the output options to the FFmpeg subprocesses. The standalone Rust pipeline calls libav in-process.
 
-## 建置與依賴
+## Build and dependencies
 
-以下指令都從 repository 根目錄執行。主機需要 NVIDIA GPU、能載入實驗 engine 的 TensorRT／CUDA 環境、Git、Docker、FFmpeg 和專案 Python 3.15。FFmpeg wrapper 使用 `/usr/bin/ffmpeg`。先安裝專案與量測工具，再於同一 Python 環境準備 TensorRT bindings。
+Run the commands from the repository root. The host needs an NVIDIA GPU, TensorRT and CUDA versions that load the test engine, Git, Docker, FFmpeg and the project's Python 3.15. The FFmpeg wrapper uses `/usr/bin/ffmpeg`. Install the project and measurement tools, then prepare the TensorRT bindings in the same Python environment.
 
 ```bash
 uv sync --locked --extra streaming --extra yolo --extra yolo-gpu
@@ -20,14 +22,14 @@ source .venv/bin/activate
 uv pip install psutil nvidia-ml-py matplotlib
 ```
 
-- Python TensorRT bindings 的建置與 SDK 要求見 [專案安裝說明](../../README.md#1-prepare-python)。bindings 和 Rust binary 各自使用的 TensorRT 版本均須能載入同一個 engine。
-- `hybrid` 需在上述 Python 環境建置並安裝 [Rust 推論 wheel](../../native/inference/README.md#tensorrt-版本與建置) 與 [Rust 後處理 wheel](../../bindings/python/postprocess/README.md#建置與切換)。推論指南也說明 `LD_LIBRARY_PATH` 和 `YOLO_WORKER_NATIVE_LIBRARY_DIRS` 的設定。
-- 獨立 binary 依 [TensorRT 建置方式](../../native/pipeline/README-zh-tw.md#啟用-tensorrt-推論) 啟用 `tensorrt` feature。
-- 將相符的 YOLO26n checkpoint 放在 `models/pt/best_yolo26n.pt`，另備已匯出的 INT8 `.engine`。測試會核對 checkpoint 和 engine 的 SHA-256。engine 預設從 `models/int8_engine/best_yolo26n.engine` 讀取，也可用 `--engine` 指定路徑。這兩個模型檔需另外準備。
+- Follow the [Python setup guide](../../README.md#1-prepare-python) for the TensorRT Python bindings and SDK requirements. The versions used by the Python bindings and Rust binary must both load the same engine.
+- For `hybrid`, build and install the [Rust inference wheel](../../native/inference/README.md#tensorrt-versions-and-build) and [Rust postprocessing wheel](../../bindings/python/postprocess/README.md#build-and-backend-selection) into that environment. The inference guide also covers `LD_LIBRARY_PATH` and `YOLO_WORKER_NATIVE_LIBRARY_DIRS`.
+- For the standalone binary, enable the `tensorrt` feature using the [TensorRT build instructions](../../native/pipeline/README.md#enable-tensorrt-inference).
+- Supply a matching YOLO26n checkpoint at `models/pt/best_yolo26n.pt` and an exported INT8 `.engine`. The test checks both SHA-256 hashes. The default engine path is `models/int8_engine/best_yolo26n.engine`. Use `--engine` to supply another path. Both model files must be provided separately.
 
-## 啟動隔離服務
+## Start isolated services
 
-PostgreSQL、Redis、MediaMTX 和 HTTP mock 均綁定 loopback。帳密、token 和上傳資料是測試用 fixture。使用這組獨立容器及資料庫執行測試。
+Bind PostgreSQL, Redis, MediaMTX and the HTTP mock to loopback. All credentials, tokens and uploads are test fixtures. Use this separate set of containers and database for the benchmark.
 
 ```bash
 docker run -d --rm --name chd-e2e-pg \
@@ -41,7 +43,7 @@ docker run -d --rm --name chd-e2e-rtsp \
   bluenviron/mediamtx@sha256:f8628851106cc053f9175b248050bb5f362a6e65abd72297c167a1cb5a9a3be2
 ```
 
-確認 PostgreSQL 可經 TCP 連線、Redis 回傳 `PONG`、MediaMTX API 回傳路徑清單，再讓 mock 保持執行。
+Check that PostgreSQL accepts TCP connections, Redis returns `PONG` and the MediaMTX API lists its paths. Leave the HTTP mock running.
 
 ```bash
 docker exec chd-e2e-pg pg_isready -h 127.0.0.1 -U fixture -d chd_e2e_benchmark
@@ -53,9 +55,9 @@ python -m experiments.full_pipeline_benchmark.mock \
   --journal outputs/full_pipeline_fixture/delivery.jsonl
 ```
 
-## 準備與發布 RTSP 來源
+## Prepare and publish the RTSP source
 
-在另一個終端將 `tests/videos/test.mp4` 製成固定 30 秒循環影片。原片為 640×352，放大後量測 1920×1080 的解碼、影格搬移和編碼工作量。來源解析度或幀率變更時，請同時更新下方影片及實驗設定。
+In a second terminal, turn `tests/videos/test.mp4` into a 30-second loop. Upscaling the 640×352 source measures decoding, frame transfers and encoding at 1920×1080. When changing the resolution or frame rate, update both the video command and the experiment settings below.
 
 ```bash
 ffmpeg -nostdin -n -filter_threads 1 -i tests/videos/test.mp4 \
@@ -68,9 +70,9 @@ ffmpeg -nostdin -re -stream_loop -1 \
   -an -c:v copy -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:28554/source
 ```
 
-## 量測及生成報告
+## Measure and generate the report
 
-在第三個終端啟用先前的 Python 環境。每次使用新的 `--output` 目錄，並讓量測依序執行。以下設定比較 32 路輸入與 4 路觀看需求。每路觀看啟用 clean 和 annotated 共兩份輸出。
+Activate the same Python environment in a third terminal. Use a new `--output` directory for each run and let the variants execute sequentially. The example measures 32 camera inputs and demand from four viewers, each requesting a clean and an annotated output.
 
 ```bash
 export PYTHON_DOTENV_DISABLED=1
@@ -85,15 +87,15 @@ python -m experiments.full_pipeline_benchmark.report \
   --primary outputs/full_pipeline_32
 ```
 
-每輪會先等待各路完成第一筆偵測 trace，並檢查指定輸出的 ready 狀態和尺寸。三組輪流先執行，再依指定的時間暖機與取樣。可透過 `--cameras 1 --viewers 1` 進行單路比較。
+Each round waits for the first detection trace on every camera, then checks readiness and dimensions of the requested outputs. The first variant rotates each round. All variants warm up and run for the specified intervals. Use `--cameras 1 --viewers 1` for a single-camera comparison.
 
-`report` 每個輸入目錄接受一種攝影機數量，以及每輪三種方案的完整 `results.json`。可用 `--single` 或 `--low-resolution` 附加其他完整實驗目錄。`summary.json`、`comparison.png` 和 `comparison.svg` 預設寫入主實驗目錄的 `report/`，可用 `--output` 選擇其他位置。
+Each input directory for `report` must contain results for one camera count, with a complete `results.json` covering all three variants in every round. Supply other completed experiments with `--single` or `--low-resolution`. By default `summary.json`, `comparison.png` and `comparison.svg` are written under `report/` in the primary experiment directory. Use `--output` to change the destination.
 
-- 各輪原始資料包含 `settings.json` 所記錄的 engine 與 binary 雜湊，以及各輪的 `result.json`、`samples.json`、程式日誌和影格 trace。報告列出各方案中位數及實際最小、最大值。
-- CPU 百分比以一個邏輯核心為 100%，PSS 以比例分攤共享記憶體。程序樹統計包含主程序及其 worker、FFmpeg 子程序，並另行記錄可取得的服務 CPU 資料。全機 GPU 使用率可能含其他工作，適合當成量測背景。
-- `frame_age_p95_ms` 從解碼取回影格計至危險判定完成。比較時請同時觀察完成判定數、來源積壓、掉格及輸出 ready 狀態。觀看端到端延遲須另行量測。
+- `settings.json` records engine and executable hashes. Raw results include each round's `result.json`, `samples.json`, logs and frame traces. The report gives the median, minimum and maximum observed for each variant.
+- For CPU percentages, 100% is one logical core. PSS apportions shared memory between processes. Process-tree totals cover the parent, workers and FFmpeg subprocesses. Available service CPU metrics are recorded separately. Host-wide GPU utilisation may include other workloads.
+- `frame_age_p95_ms` measures time from retrieving the decoded frame to completing the hazard decision. Interpret it alongside completed decisions, source backlog, dropped frames and output readiness. Measure viewer end-to-end latency separately.
 
-執行完畢後在各終端停止來源和 mock，再停止測試容器。
+Stop the source and mock in their terminals, then stop the test containers.
 
 ```bash
 docker stop chd-e2e-pg chd-e2e-redis chd-e2e-rtsp

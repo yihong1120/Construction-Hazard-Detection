@@ -1,4 +1,6 @@
-# Tenant 與 Deployment 管理
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
+# 租戶與部署管理
 
 `tenants` 與 `deployments` 是 Deployment Registry 的唯一權威設定來源。原生 App
 先以公司一次性啟用碼取得 `deployment_id`，再讀取並驗證 Registry 的 Ed25519 簽章
@@ -47,7 +49,7 @@ Registry 設定檔登入。App 不得從 deep link、query 或 header 接受 ten
 反向代理必須將外部 HTTPS scheme 正確交給 ASGI。伺服器只依實際抵達的 HTTPS
 origin 查詢 `deployments`，不信任 client 提供的 tenant/deployment header。
 
-## Signed Deployment Registry
+## 簽署的部署登錄服務（Deployment Registry）
 
 受管理的原生 App 可先用一次性公司啟用碼交換 deployment ID：
 
@@ -151,8 +153,7 @@ signature。簽署 bytes 必須是以下七個欄位依 key 字典序、UTF-8、
 
 將
 `nginx.deployment-registry.conf.example` 的 HTTP/HTTPS location 放入對應的
-server block（HTTPS location 必須在通用 `/hazard/api/` fallback 前）。本機正式
-設定可套用相同內容至 `deploy/bff/nginx.changdar-server.complete.conf`。此路由只
+server block（HTTPS location 必須在通用 `/hazard/api/` fallback 前）。此路由只
 允許 HTTPS（HTTP 請求直接失敗、不轉址），並示範由 edge 加上
 `Cache-Control: no-store`。client 不可將該 header 視為 Registry response 有效性的
 必要條件。

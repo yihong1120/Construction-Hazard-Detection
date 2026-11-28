@@ -1,3 +1,5 @@
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
+
 # Evidence identity migration
 
 Run these scripts through the deployment database workflow before starting the
@@ -5,7 +7,7 @@ new application. Application startup never applies migrations.
 
 The manifest also includes `20261101_01_model_publications.sql`, which adds the
 durable publication journal required by the model publication CLI. It does not
-change existing catalog entries or start a model publication.
+change existing catalogue entries or start a model publication.
 
 1. Apply `20261030_01_evidence_identity.sql`. It adds nullable IDs, constraints
    and indexes while leaving the legacy name foreign key in place. Schedule
@@ -90,7 +92,7 @@ schema drift stop the run rather than guessing or marking a stage complete.
 `20261101_02_notification_delivery.sql` adds `sites.recipient_revision`,
 subscription/identity/scope triggers and per-registration delivery receipts.
 Apply the complete manifest before deploying the notification services. Fresh
-initialization includes these objects. Application startup does not run DDL.
+initialisation includes these objects. Application startup does not run DDL.
 
 Recipient lookups compare the database version with the cached version; Redis
 leases expire after five minutes. Preference, account-status, role, group and
@@ -114,16 +116,16 @@ migration is required for this maintenance change.
 
 `20261102_01_model_versions.sql` adds immutable model-version evidence metadata.
 Apply the full manifest before deploying the updated violation service. The
-migration backfills the current catalog and trusted definitions in publication
+migration backfills the current catalogue and trusted definitions in publication
 journals; it is repeatable and rejects conflicting hashes/classes for the same
-model key and version. Future catalog inserts, updates, rollback and deletion
+model key and version. Future catalogue inserts, updates, rollback and deletion
 retain metadata in the same transaction. A version's hash and class definitions
 cannot be overwritten; publish a new version to change either.
 
 Evidence uploads check the current model's tenant, role, site, enabled state and
 stream capability, then resolve the submitted version's historical classes.
 They do not download or load weights. History contains no permission grants.
-Versions absent from both the catalog and publication journals cannot be
+Versions absent from both the catalogue and publication journals cannot be
 reconstructed automatically and return `MODEL_VERSION_UNKNOWN`; restore only
 trusted metadata for those versions. Previously archived HTTP 409 events remain
 available for explicit requeue with the outbox CLI after the migration.
@@ -141,9 +143,9 @@ Fresh installations receive the same schema from `scripts/init.postgres.sql`.
 A delete first commits local suspension and intent. Remote deletion and local
 cleanup are idempotent; the management API retries unfinished work after
 restart. HTTP 503 `account_deletion_pending` means the account remains suspended
-and deletion is queued. Retrying the same authorized user-ID deletion is safe.
+and deletion is queued. Retrying the same authorised user-ID deletion is safe.
 Keep the API running until pending work completes; operation records survive
-local user deletion so a repeated request can still be authorized by its saved
+local user deletion so a repeated request can still be authorised by its saved
 scope. Do not manually reactivate a pending deletion.
 
 New Keycloak users start disabled. A creation records an operation ID without
@@ -171,7 +173,7 @@ before commit cleans the owned files; a lost commit response preserves the
 image until recovery can prove whether a record exists. The evidence API checks
 intents older than one minute every 30 seconds and skips active writers using
 PostgreSQL advisory locks. All instances must share the same evidence storage
-root. Reused event IDs require matching normalized metadata and image bytes;
+root. Reused event IDs require matching normalised metadata and image bytes;
 a different body returns HTTP 409 `event_id_conflict`. Missing legacy image
 bytes cannot be verified and also return conflict rather than silently adopting
 a new body.
@@ -180,17 +182,17 @@ a new body.
 
 Apply `20261103_01_account_state_evidence_recovery.sql` with the existing runner
 before starting the updated management and evidence APIs. It adds optimistic
-`users.state_revision`, the synchronized revision in account operations, and
+`users.state_revision`, the synchronised revision in account operations, and
 attempt/error/next-attempt fields for evidence recovery. Existing evidence
 intents remain pending and eligible for recovery. Existing migration files and
-checksums are unchanged; fresh initialization includes this migration's schema.
+checksums are unchanged; fresh initialisation includes this migration's schema.
 
 Deploy management workers together: older workers do not understand the new
 status/profile/rename operation kinds. Account changes lock and refresh the
 current user before validation. They commit local data once and then reconcile
 Keycloak from the latest committed state under the same user-row coordination.
 An HTTP 503 `account_reconciliation_required` can mean local data was committed
-but remote synchronization is pending; retry or inspect `scripts.account_operations`.
+but remote synchronisation is pending; retry or inspect `scripts.account_operations`.
 No password is stored in these operations. A lost local commit response is
 resolved from the committed row, so rollback recovery cannot replay a stale
 remote snapshot over a newer account state. Keep the existing operation tables
@@ -201,7 +203,7 @@ Evidence recovery uses `EVIDENCE_RECOVERY_` settings: `INTERVAL_SECONDS` (30),
 (5), and `MAX_RETRY_SECONDS` (300). Locked writers are deferred without counting
 as failures; failed jobs receive exponential backoff. Selection by next attempt
 prevents permanently failing old files from starving later work. Cancellation
-waits for in-progress file synchronization or commits before releasing ownership.
+waits for in-progress file synchronisation or commits before releasing ownership.
 
 Account and evidence operations share independent journal and ownership pools,
 recreated from the source pool to preserve connection arguments, custom creators
@@ -217,11 +219,11 @@ management workers. It adds `sync_parts` and `completed_at`, a partial due index
 a completed-job index and `account_deletion_receipts`. Previously completed
 operations receive the upgrade timestamp so they retain a full retention window;
 completed deletions are backfilled into receipts without extending existing
-receipt expiry when the SQL is repeated. Fresh initialization includes the same
+receipt expiry when the SQL is repeated. Fresh initialisation includes the same
 schema. Existing migration checksums are unchanged.
 
-OpenWebUI synchronization now uses the durable account workflow. Local changes
-commit once; state, profile and application roles are synchronized in separate
+OpenWebUI synchronisation now uses the durable account workflow. Local changes
+commit once; state, profile and application roles are synchronised in separate
 idempotent steps, each recording progress. A local commit whose response was
 lost is resolved from committed data. Retries skip completed steps, and a new
 account revision resets progress so old values cannot overwrite current values.
@@ -234,7 +236,7 @@ retry by the operator.
 `ACCOUNT_OPERATIONS_CLEANUP_BATCH_SIZE` to 128. Completed operations are purged
 in bounded batches; pending and uncertain work is retained.
 `ACCOUNT_OPERATIONS_DELETION_RECEIPT_DAYS` defaults to 365 for new deletions.
-Receipts preserve the original authorization scope for repeat user-ID deletions
+Receipts preserve the original authorisation scope for repeat user-ID deletions
 after their detailed operation is purged; requests after receipt expiry return
 404. The migration grants existing completed deletions a 365-day receipt window.
 Inspect pending progress with `python -m scripts.account_operations list` and
@@ -248,9 +250,9 @@ no token plaintext is written to PostgreSQL. Old FCM caches without registration
 versions are invalidated for reconstruction instead of being blindly deleted.
 
 
-Account maintenance no longer couples retention to synchronization. The
+Account maintenance no longer couples retention to synchronisation. The
 `AccountLifecycle` coordinator retains operation ownership and commits;
-`AccountSynchronizer` owns typed synchronization plans and validated per-part
+`AccountSynchronizer` owns typed synchronisation plans and validated per-part
 progress; `AccountRetention` owns completion receipts and bounded pruning.
 Invalid persisted progress is rejected before remote effects.
 
@@ -258,7 +260,7 @@ Under `ACCOUNT_OPERATIONS_`, `SYNC_INTERVAL_SECONDS` defaults to 5,
 `SYNC_BATCH_SIZE` to 16, `SYNC_CONCURRENCY` to 2 and `SYNC_BUDGET_SECONDS` to 30.
 Independent `CLEANUP_INTERVAL_SECONDS` defaults to 60 and
 `CLEANUP_BUDGET_SECONDS` to 2. A cleanup timeout cannot skip pending operations;
-synchronization isolates per-operation failures and reschedules timed-out work.
+synchronisation isolates per-operation failures and reschedules timed-out work.
 Shutdown cancels both maintenance tasks and drains transaction cleanup before
 releasing pools. These scheduling changes require no additional SQL migration.
 
