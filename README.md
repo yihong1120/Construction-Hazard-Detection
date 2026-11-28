@@ -1,8 +1,6 @@
 🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-# Construction Hazard Detection
-
-<img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI-driven construction safety monitoring banner">
+<img width="100%" src="./assets/images/project_graphics/banner.gif" alt="Construction Hazard Detection">
 
 <div align="center">
    <a href="examples/YOLO_server_api">Server API</a> |

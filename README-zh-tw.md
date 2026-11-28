@@ -1,8 +1,6 @@
 🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
-# 工地危害辨識（Construction Hazard Detection）
-
-<img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI 工地安全監測橫幅">
+<img width="100%" src="./assets/images/project_graphics/banner.gif" alt="工地危害辨識（Construction Hazard Detection）">
 
 <div align="center">
    <a href="examples/YOLO_server_api/README-zh-tw.md">推論 API</a> |
