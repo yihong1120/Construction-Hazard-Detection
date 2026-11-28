@@ -1,30 +1,6 @@
-🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
-
 # 工地危害辨識（Construction Hazard Detection）
 
 <img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI 工地安全監測橫幅">
-
-<div align="center">
-   <a href="examples/YOLO_server_api/README-zh-tw.md">推論 API</a> |
-   <a href="examples/local_notification_server/README-zh-tw.md">FCM 通知服務</a> |
-   <a href="examples/violation_records/README-zh-tw.md">違規紀錄服務</a> |
-   <a href="examples/bff/README-zh-tw.md">網頁 BFF</a> |
-   <a href="https://github.com/yihong1120/visionnaire-flutter">Flutter App</a> |
-   <a href="examples/db_management/README-zh-tw.md">資料管理服務</a> |
-   <a href="examples/streaming_web/README-zh-tw.md">網頁串流服務</a> |
-   <a href="examples/mcp_server/README-zh-tw.md">MCP 伺服器</a> |
-   <a href="examples/YOLO_data_augmentation/README-zh-tw.md">資料增強</a> |
-   <a href="examples/YOLO_evaluation/README-zh-tw.md">模型評估</a> |
-   <a href="examples/YOLO_train/README-zh-tw.md">模型訓練</a>
-</div>
-
-<br>
-
-[獨立 Rust 攝影機流程](native/pipeline/README-zh-tw.md)支援影像擷取、TensorRT 推論、
-危害分析與多語標註，並透過 PostgreSQL 持久化佇列保存與派送事件。指南包含
-`construction-pipeline` 的建置、執行與驗證步驟。
-
-[獨立 Rust 發行預覽版](deploy/rust-runtime/README-zh-tw.md)提供攝影機流程與 Rust HTTP API 的建置、服務單元及隔離驗證方式。
 
 <div align="center">
    <a href="https://www.python.org/downloads/">
@@ -56,11 +32,34 @@
    </a>
 </div>
 
-<br>
+<p align="center">
+  <a href="./README.md">🇬🇧 English (UK)</a> |
+  <a href="./README-zh-tw.md">🇹🇼 繁體中文（台灣）</a>
+</p>
+
+<div align="center">
+   <a href="examples/YOLO_server_api/README-zh-tw.md">推論 API</a> |
+   <a href="examples/local_notification_server/README-zh-tw.md">FCM 通知服務</a> |
+   <a href="examples/violation_records/README-zh-tw.md">違規紀錄服務</a> |
+   <a href="examples/bff/README-zh-tw.md">網頁 BFF</a> |
+   <a href="https://github.com/yihong1120/visionnaire-flutter">Flutter App</a> |
+   <a href="examples/db_management/README-zh-tw.md">資料管理服務</a> |
+   <a href="examples/streaming_web/README-zh-tw.md">網頁串流服務</a> |
+   <a href="examples/mcp_server/README-zh-tw.md">MCP 伺服器</a> |
+   <a href="examples/YOLO_data_augmentation/README-zh-tw.md">資料增強</a> |
+   <a href="examples/YOLO_evaluation/README-zh-tw.md">模型評估</a> |
+   <a href="examples/YOLO_train/README-zh-tw.md">模型訓練</a>
+</div>
 
 這是一套用於工地即時影像的 AI 安全監測系統。下文介紹以 `main.py` 啟動的
 Python 流程，包含串流處理模組 `src/stream_processor.py`、本機 YOLO 工作者、
 MediaMTX 直播串流發布、PostgreSQL 紀錄、Redis 即時狀態協調，以及多個 FastAPI 服務。
+
+[獨立 Rust 攝影機流程](native/pipeline/README-zh-tw.md)支援影像擷取、TensorRT 推論、
+危害分析與多語標註，並透過 PostgreSQL 持久化佇列保存與派送事件。指南包含
+`construction-pipeline` 的建置、執行與驗證步驟。
+
+[獨立 Rust 發行預覽版](deploy/rust-runtime/README-zh-tw.md)提供攝影機流程與 Rust HTTP API 的建置、服務單元及隔離驗證方式。
 
 ## 可偵測項目
 
