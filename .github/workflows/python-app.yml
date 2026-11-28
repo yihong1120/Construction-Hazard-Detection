@@ -197,7 +197,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswscale-dev pkg-config
         cargo build --locked --manifest-path native/pipeline/Cargo.toml
-        python scripts/validate_rust_pipeline.py --binary native/pipeline/target/debug/construction-pipeline
+        python -m scripts.validate_rust_pipeline --binary native/pipeline/target/debug/construction-pipeline
     - name: Test with pytest
       run: |
         # Measure application code only (main, src, examples). Do not include tests in coverage sources
@@ -210,7 +210,7 @@ jobs:
           -n auto \
           tests/
     - name: Upload coverage to Codecov
-      if: ${{ !cancelled() }}
+      if: ${{ !cancelled() && (success() || hashFiles('coverage.xml') != '') }}
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
